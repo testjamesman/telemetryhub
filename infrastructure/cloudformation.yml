@@ -1,0 +1,313 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Provisions the complete infrastructure for the Telemetry Hub test application,
+  including 3 VPCs, a Transit Gateway, EC2 instances, RDS, and SQS.
+
+Parameters:
+  MyIP:
+    Type: String
+    Description: Your personal IP address for RDP/SSH access if needed (e.g., 1.2.3.4/32).
+    Default: 0.0.0.0/0
+
+  WindowsAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Description: The latest AMI ID for Windows Server 2022.
+    Default: '/aws/service/ami-windows-latest/Windows_Server-2022-English-Full-Base'
+
+  LinuxAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Description: The latest AMI ID for Amazon Linux 2.
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+
+  DbMasterUsername:
+    Type: String
+    Description: Master username for the RDS database.
+    Default: dbadmin
+
+  DbMasterPassword:
+    Type: String
+    Description: Master password for the RDS database. Will be visible in the console.
+    Default: ChangeMe123
+    MinLength: 8
+
+Resources:
+  #----------------------------------------------------------------
+  # IAM - Role and Profile for EC2 SSM Access
+  #----------------------------------------------------------------
+  SSMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: TelemetryHubSSMRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  SSMInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: TelemetryHubSSMInstanceProfile
+      Roles:
+        - !Ref SSMRole
+
+  #----------------------------------------------------------------
+  # NETWORKING - VPCs, Subnets, and Gateways
+  #----------------------------------------------------------------
+  VPCA:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.10.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{Key: Name, Value: TelemetryHub-VPC-A-EKS}]
+
+  VPCB:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.20.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{Key: Name, Value: TelemetryHub-VPC-B-Windows}]
+
+  VPCC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.30.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{Key: Name, Value: TelemetryHub-VPC-C-Linux-Data}]
+
+  # --- Subnets for each VPC ---
+  SubnetA1:
+    Type: AWS::EC2::Subnet
+    Properties: {VpcId: !Ref VPCA, CidrBlock: 10.10.1.0/24, AvailabilityZone: !Select [0, !GetAZs '']}
+  SubnetB1:
+    Type: AWS::EC2::Subnet
+    Properties: {VpcId: !Ref VPCB, CidrBlock: 10.20.1.0/24, AvailabilityZone: !Select [0, !GetAZs '']}
+  SubnetC1:
+    Type: AWS::EC2::Subnet
+    Properties: {VpcId: !Ref VPCC, CidrBlock: 10.30.1.0/24, AvailabilityZone: !Select [0, !GetAZs '']}
+
+  # --- Transit Gateway ---
+  TransitGateway:
+    Type: AWS::EC2::TransitGateway
+    Properties:
+      Description: TGW for Telemetry Hub VPCs
+      DefaultRouteTableAssociation: enable
+      DefaultRouteTablePropagation: enable
+      Tags: [{Key: Name, Value: TelemetryHub-TGW}]
+
+  TGWAttachmentA:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties: {VpcId: !Ref VPCA, SubnetIds: [!Ref SubnetA1], TransitGatewayId: !Ref TransitGateway}
+  TGWAttachmentB:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties: {VpcId: !Ref VPCB, SubnetIds: [!Ref SubnetB1], TransitGatewayId: !Ref TransitGateway}
+  TGWAttachmentC:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties: {VpcId: !Ref VPCC, SubnetIds: [!Ref SubnetC1], TransitGatewayId: !Ref TransitGateway}
+
+  # --- Route Tables to direct traffic to the TGW ---
+  RouteTableA:
+    Type: AWS::EC2::RouteTable
+    Properties: {VpcId: !Ref VPCA}
+  RouteTableB:
+    Type: AWS::EC2::RouteTable
+    Properties: {VpcId: !Ref VPCB}
+  RouteTableC:
+    Type: AWS::EC2::RouteTable
+    Properties: {VpcId: !Ref VPCC}
+
+  # --- Routes ---
+  RouteAtoB:
+    Type: AWS::EC2::Route
+    Properties: {RouteTableId: !Ref RouteTableA, DestinationCidrBlock: !GetAtt VPCB.CidrBlock, TransitGatewayId: !Ref TransitGateway}
+    DependsOn: TGWAttachmentA
+  RouteAtoC:
+    Type: AWS::EC2::Route
+    Properties: {RouteTableId: !Ref RouteTableA, DestinationCidrBlock: !GetAtt VPCC.CidrBlock, TransitGatewayId: !Ref TransitGateway}
+    DependsOn: TGWAttachmentA
+  RouteBtoA:
+    Type: AWS::EC2::Route
+    Properties: {RouteTableId: !Ref RouteTableB, DestinationCidrBlock: !GetAtt VPCA.CidrBlock, TransitGatewayId: !Ref TransitGateway}
+    DependsOn: TGWAttachmentB
+  RouteBtoC:
+    Type: AWS::EC2::Route
+    Properties: {RouteTableId: !Ref RouteTableB, DestinationCidrBlock: !GetAtt VPCC.CidrBlock, TransitGatewayId: !Ref TransitGateway}
+    DependsOn: TGWAttachmentB
+  RouteCtoA:
+    Type: AWS::EC2::Route
+    Properties: {RouteTableId: !Ref RouteTableC, DestinationCidrBlock: !GetAtt VPCA.CidrBlock, TransitGatewayId: !Ref TransitGateway}
+    DependsOn: TGWAttachmentC
+  RouteCtoB:
+    Type: AWS::EC2::Route
+    Properties: {RouteTableId: !Ref RouteTableC, DestinationCidrBlock: !GetAtt VPCB.CidrBlock, TransitGatewayId: !Ref TransitGateway}
+    DependsOn: TGWAttachmentC
+
+  # --- Subnet Route Table Associations ---
+  SubnetRouteAssocA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref SubnetA1, RouteTableId: !Ref RouteTableA}
+  SubnetRouteAssocB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref SubnetB1, RouteTableId: !Ref RouteTableB}
+  SubnetRouteAssocC:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref SubnetC1, RouteTableId: !Ref RouteTableC}
+
+  #----------------------------------------------------------------
+  # SECURITY - Security Groups
+  #----------------------------------------------------------------
+  WindowsSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow RDP from MyIP
+      VpcId: !Ref VPCB
+      SecurityGroupIngress:
+        # This rule is a fallback for direct RDP. Session Manager access is handled by the IAM role.
+        - {IpProtocol: tcp, FromPort: 3389, ToPort: 3389, CidrIp: !Ref MyIP}
+
+  LinuxSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow SSH from MyIP and HTTP from VPC A
+      VpcId: !Ref VPCC
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 22, ToPort: 22, CidrIp: !Ref MyIP}
+        - {IpProtocol: tcp, FromPort: 8080, ToPort: 8080, CidrIp: !GetAtt VPCA.CidrBlock}
+
+  RdsSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow PostgreSQL from VPC A and VPC C
+      VpcId: !Ref VPCC
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 5432, ToPort: 5432, CidrIp: !GetAtt VPCA.CidrBlock}
+        - {IpProtocol: tcp, FromPort: 5432, ToPort: 5432, CidrIp: !GetAtt VPCC.CidrBlock}
+
+  #----------------------------------------------------------------
+  # COMPUTE - EC2 Instances
+  #----------------------------------------------------------------
+  WindowsInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.medium
+      ImageId: !Ref WindowsAmiId
+      IamInstanceProfile: !Ref SSMInstanceProfile
+      SubnetId: !Ref SubnetB1
+      SecurityGroupIds: [!Ref WindowsSG]
+      Tags: [{Key: Name, Value: TelemetryHub-Windows-Producer}]
+      UserData:
+        Fn::Base64: !Sub |
+          <powershell>
+          # Download and install .NET 6 SDK silently
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -Uri https://dot.net/v1/dotnet-install.ps1 -OutFile .\\dotnet-install.ps1
+          .\\dotnet-install.ps1 -Channel 6.0 -InstallDir 'C:\Program Files\dotnet'
+          # Add dotnet to the system PATH
+          $newPath = ('C:\Program Files\dotnet', [Environment]::GetEnvironmentVariable('PATH', 'Machine')) -join ';'
+          [Environment]::SetEnvironmentVariable('PATH', $newPath, 'Machine')
+          </powershell>
+
+  LinuxInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LinuxAmiId
+      IamInstanceProfile: !Ref SSMInstanceProfile
+      SubnetId: !Ref SubnetC1
+      SecurityGroupIds: [!Ref LinuxSG]
+      Tags: [{Key: Name, Value: TelemetryHub-Linux-Exporter}]
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          yum update -y
+          yum install -y golang git
+
+  #----------------------------------------------------------------
+  # DATA & MESSAGING - SQS and RDS
+  #----------------------------------------------------------------
+  SqsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: TelemetryHubQueue
+
+  RdsDbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for Telemetry Hub RDS
+      SubnetIds: [!Ref SubnetC1]
+
+  RdsInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: telemetry-hub-db
+      DBInstanceClass: db.t3.micro
+      Engine: postgres
+      EngineVersion: '15.3'
+      AllocatedStorage: '20'
+      DBSubnetGroupName: !Ref RdsDbSubnetGroup
+      VPCSecurityGroups: [!Ref RdsSG]
+      MasterUsername: !Ref DbMasterUsername
+      MasterUserPassword: !Ref DbMasterPassword
+      PubliclyAccessible: false
+
+  #----------------------------------------------------------------
+  # IAM - Role for EKS Pod
+  #----------------------------------------------------------------
+  SqsReaderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: TelemetryHubSqsReaderRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com # Placeholder, will be updated by eksctl or manually
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SqsReadDeletePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt SqsQueue.Arn
+
+Outputs:
+  VPCAId:
+    Description: VPC ID for EKS Cluster
+    Value: !Ref VPCA
+  VPCBId:
+    Description: VPC ID for Windows Host
+    Value: !Ref VPCB
+  VPCCId:
+    Description: VPC ID for Linux Host and Data
+    Value: !Ref VPCC
+  EKSSubnetId:
+    Description: Subnet ID for EKS Cluster
+    Value: !Ref SubnetA1
+  WindowsInstanceId:
+    Description: Instance ID of the Windows VM
+    Value: !Ref WindowsInstance
+  LinuxInstanceId:
+    Description: Instance ID of the Linux VM
+    Value: !Ref LinuxInstance
+  SqsQueueUrl:
+    Description: URL of the SQS Queue
+    Value: !Ref SqsQueue
+  RdsEndpoint:
+    Description: Endpoint address for the RDS database
+    Value: !GetAtt RdsInstance.Endpoint.Address
+  SqsReaderRoleArn:
+    Description: ARN of the IAM Role for the EKS pod
+    Value: !GetAtt SqsReaderRole.Arn

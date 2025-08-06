@@ -1,0 +1,44 @@
+# k8s/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-processor
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: python-processor
+  template:
+    metadata:
+      labels:
+        app: python-processor
+      annotations:
+        # This annotation is crucial for Prometheus-based agent scrapers
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '8000'
+    spec:
+      # This assumes you have configured IAM Roles for Service Accounts (IRSA)
+      # and associated the SqsReaderRole with this service account.
+      serviceAccountName: python-processor-sa
+      containers:
+      - name: processor
+        # IMPORTANT: Replace this with the URI of your container image in ECR
+        image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/your-repo-name:latest
+        ports:
+        - containerPort: 8000
+        env:
+        # These values will be populated from the CloudFormation stack outputs
+        - name: SQS_QUEUE_URL
+          value: "YOUR_SQS_QUEUE_URL"
+        - name: DB_HOST
+          value: "YOUR_RDS_ENDPOINT"
+        - name: DB_NAME
+          value: "postgres" # Or your specific DB name if changed
+        - name: DB_USER
+          value: "dbadmin"
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: rds-credentials
+              key: password

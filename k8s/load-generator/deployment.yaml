@@ -1,0 +1,28 @@
+# k8s/load-generator/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: load-generator
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: load-generator
+  template:
+    metadata:
+      labels:
+        app: load-generator
+    spec:
+      containers:
+      - name: load-generator
+        # IMPORTANT: Replace this with the URI of your load-generator image in ECR
+        image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/your-load-gen-repo:latest
+        ports:
+        - containerPort: 8080
+        env:
+        # This value will be populated from the CloudFormation stack outputs
+        - name: SQS_QUEUE_URL
+          value: "YOUR_SQS_QUEUE_URL"
+        - name: AWS_REGION
+          value: "us-east-1" # Or your target region

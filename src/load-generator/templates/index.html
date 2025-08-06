@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telemetry Hub Load Generator</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f0f2f5;
+            color: #1c1e21;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            margin: 0;
+            padding: 2rem;
+        }
+        .container {
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1), 0 8px 16px rgba(0, 0, 0, 0.1);
+            padding: 2rem;
+            margin-bottom: 2rem;
+            width: 100%;
+            max-width: 500px;
+            box-sizing: border-box;
+        }
+        h1, h2 {
+            text-align: center;
+            color: #0d1117;
+        }
+        .control-group {
+            margin-bottom: 1.5rem;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+        }
+        .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        input[type="range"] {
+            flex-grow: 1;
+            cursor: pointer;
+        }
+        .slider-value {
+            font-weight: bold;
+            min-width: 30px;
+        }
+        .button-group {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+        }
+        button {
+            border: none;
+            border-radius: 6px;
+            padding: 0.75rem 1.5rem;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .btn-blue { background-color: #1877f2; color: white; }
+        .btn-blue:hover { background-color: #166fe5; }
+        .btn-green { background-color: #42b72a; color: white; }
+        .btn-green:hover { background-color: #36a420; }
+        .btn-red { background-color: #fa383e; color: white; }
+        .btn-red:hover { background-color: #e3282d; }
+        .status-bar {
+            background-color: #e4e6eb;
+            border-radius: 6px;
+            padding: 1rem;
+            text-align: center;
+            font-weight: bold;
+            margin-bottom: 1.5rem;
+        }
+        .footer {
+            text-align: center;
+            color: #606770;
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Telemetry Hub</h1>
+
+    <div class="container">
+        <h2>Service Interaction Demo</h2>
+        <p style="text-align: center;">Click the button for a single invocation of the backend service.</p>
+        <div class="button-group">
+            <button id="invokeOnceBtn" class="btn-blue">Invoke Once</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>Dynamic Load Generator</h2>
+        <div id="statusBar" class="status-bar">Status: Stopped</div>
+
+        <div class="control-group">
+            <label for="rpmSlider">Requests per Minute: <span id="rpmValue" class="slider-value">60</span></label>
+            <div class="slider-container">
+                <input type="range" id="rpmSlider" min="1" max="300" value="60">
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label for="errorSlider">Error Rate (%): <span id="errorValue" class="slider-value">0</span></label>
+            <div class="slider-container">
+                <input type="range" id="errorSlider" min="0" max="100" value="0">
+            </div>
+        </div>
+
+        <div class="button-group">
+            <button id="startBtn" class="btn-green">Start Load</button>
+            <button id="stopBtn" class="btn-red">Stop Load</button>
+        </div>
+    </div>
+
+    <p class="footer">Load Generator UI → SQS → Python Processor (EKS)</p>
+
+    <script>
+        const rpmSlider = document.getElementById('rpmSlider');
+        const errorSlider = document.getElementById('errorSlider');
+        const rpmValue = document.getElementById('rpmValue');
+        const errorValue = document.getElementById('errorValue');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const invokeOnceBtn = document.getElementById('invokeOnceBtn');
+        const statusBar = document.getElementById('statusBar');
+
+        rpmSlider.oninput = () => rpmValue.textContent = rpmSlider.value;
+        errorSlider.oninput = () => errorValue.textContent = errorSlider.value;
+
+        async function updateStatus() {
+            try {
+                const response = await fetch('/status');
+                const data = await response.json();
+                if (data.running) {
+                    statusBar.textContent = `Status: Running (${data.rpm} RPM, ${data.error_rate}% Errors)`;
+                    statusBar.style.backgroundColor = '#d4edda'; // Greenish
+                } else {
+                    statusBar.textContent = 'Status: Stopped';
+                    statusBar.style.backgroundColor = '#e4e6eb'; // Grey
+                }
+            } catch (error) {
+                console.error('Failed to fetch status:', error);
+                statusBar.textContent = 'Status: Connection Error';
+                statusBar.style.backgroundColor = '#f8d7da'; // Reddish
+            }
+        }
+
+        startBtn.onclick = async () => {
+            await fetch('/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    rpm: parseInt(rpmSlider.value),
+                    error_rate: parseInt(errorSlider.value)
+                })
+            });
+            updateStatus();
+        };
+
+        stopBtn.onclick = async () => {
+            await fetch('/stop', { method: 'POST' });
+            updateStatus();
+        };
+
+        invokeOnceBtn.onclick = async () => {
+            invokeOnceBtn.disabled = true;
+            invokeOnceBtn.textContent = 'Invoking...';
+            await fetch('/invoke-once', { method: 'POST' });
+            setTimeout(() => {
+                invokeOnceBtn.disabled = false;
+                invokeOnceBtn.textContent = 'Invoke Once';
+            }, 1000);
+        };
+
+        // Initial status check and periodic updates
+        updateStatus();
+        setInterval(updateStatus, 5000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+# k8s/load-generator/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: load-generator-service
+  namespace: default
+spec:
+  selector:
+    app: load-generator
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+  # Use a LoadBalancer to expose the UI to the internet
+  type: LoadBalancer
