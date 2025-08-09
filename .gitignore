@@ -25,6 +25,9 @@ yarn-error.log*
 .env.*.local
 !/.env.example
 
+# Local development directory
+dev/
+
 ### C# / .NET ###
 # Folders
 [Bb]in/
@@ -35,6 +38,7 @@ packages/
 *.user
 *.userosscache
 *.sln.docstates
+*.sln
 # Build results
 [Dd]ebug/
 [Dd]ebugPublic/
@@ -112,4 +116,3 @@ packaged.yaml
 *.tfstate
 *.tfstate.*.backup
 crash.log
-

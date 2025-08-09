@@ -23,76 +23,39 @@ tracer = trace.get_tracer(__name__)
 # --- AWS & DB Config ---
 SQS_QUEUE_URL = os.environ.get("SQS_QUEUE_URL")
 DB_HOST = os.environ.get("DB_HOST")
-DB_NAME = os.environ.get("DB_NAME", "telemetryhubdb") # Default to the db we are configuring
-DB_USER = os.environ.get("DB_USER", "dbadmin")       # Default to the user we are configuring
+DB_NAME = os.environ.get("DB_NAME", "telemetryhubdb")
+DB_USER = os.environ.get("DB_USER", "dbadmin")
 DB_PASS = os.environ.get("DB_PASS")
 # -----------------------
 
 sqs = boto3.client("sqs", region_name=os.environ.get("AWS_REGION", "us-east-1"))
 
-def get_db_connection(db_name='postgres'):
-    """Establishes a new connection to the PostgreSQL database."""
-    # Connect to a specified database, defaulting to 'postgres' for initial setup.
-    conn = psycopg2.connect(
-        host=DB_HOST,
-        dbname=db_name,
-        user=DB_USER,
-        password=DB_PASS
-    )
-    return conn
-
-def configure_postgres_access():
-    """
-    Finds pg_hba.conf, adds a rule to allow all IP access for the user, and reloads config.
-    *** WARNING: This is insecure and for demonstration purposes only. ***
-    """
+def get_db_connection():
+    """Establishes a new connection to the PostgreSQL database using SSL."""
+    if not DB_PASS:
+        logging.error("FATAL: DB_PASS environment variable is not set.")
+        return None
+    
     conn = None
-    rule = f"host\t{DB_NAME}\t{DB_USER}\t0.0.0.0/0\ttrust\n"
-    logging.info("Attempting to configure PostgreSQL access...")
-
     try:
-        conn = get_db_connection() # Connects to 'postgres' db by default
-        conn.autocommit = True
-        cur = conn.cursor()
-
-        logging.info("Finding pg_hba.conf file location...")
-        cur.execute("SHOW hba_file;")
-        hba_file_path = cur.fetchone()[0]
-        logging.info(f"pg_hba.conf found at: {hba_file_path}")
-
-        with open(hba_file_path, 'r+') as f:
-            hba_content = f.read()
-            if rule not in hba_content:
-                logging.warning(f"Rule not found. Appending insecure rule to {hba_file_path}")
-                logging.warning(f"RULE: '{rule.strip()}' - THIS IS NOT SAFE FOR PRODUCTION!")
-                f.write(f"\n# --- Added by Python Demo App ---\n")
-                f.write(rule)
-
-                logging.info("Reloading PostgreSQL configuration...")
-                cur.execute("SELECT pg_reload_conf();")
-                if cur.fetchone()[0]:
-                    logging.info("PostgreSQL configuration reloaded successfully.")
-                else:
-                    logging.error("Failed to reload PostgreSQL configuration.")
-            else:
-                logging.info("Access rule already exists in pg_hba.conf. No changes needed.")
-
-        cur.close()
-        return True
+        # Use sslmode='require' for secure connections to RDS
+        conn_string = f"host={DB_HOST} dbname={DB_NAME} user={DB_USER} password={DB_PASS} sslmode='require'"
+        conn = psycopg2.connect(conn_string)
+        return conn
     except Exception as e:
-        logging.error(f"An error occurred during pg_hba.conf update: {e}", exc_info=True)
-        return False
-    finally:
-        if conn:
-            conn.close()
+        logging.error(f"Failed to connect to the database: {e}")
+        return None
 
 
 def create_db_table():
     """Creates the processed_messages table if it doesn't exist."""
     conn = None
     try:
-        # Now, connect to the specific application database
-        conn = get_db_connection(db_name=DB_NAME)
+        conn = get_db_connection()
+        if conn is None:
+            logging.error("Cannot create table, no database connection.")
+            return False
+            
         cur = conn.cursor()
         cur.execute("""
             CREATE TABLE IF NOT EXISTS processed_messages (
@@ -134,7 +97,11 @@ def process_messages():
                 return
 
             logging.info(f"Received {len(messages)} messages to process.")
-            conn = get_db_connection(db_name=DB_NAME)
+            conn = get_db_connection()
+            if conn is None:
+                logging.error("Cannot process messages, no database connection.")
+                return
+
             for msg in messages:
                 with tracer.start_as_current_span("process_single_message") as msg_span:
                     message_id = msg['MessageId']
@@ -170,13 +137,9 @@ def main_loop():
 
 if __name__ == "__main__":
     # --- Initial Setup ---
-    # Try to configure and set up the database, but don't let failures here
-    # stop the main application from starting. The processing loop will retry.
+    # Attempt to create the database table on startup.
     logging.info("Performing initial database setup...")
-    if configure_postgres_access():
-        create_db_table()
-    else:
-        logging.warning("Initial PostgreSQL configuration failed. The application will continue and retry DB operations in the main loop.")
+    create_db_table()
 
     # --- Start Application Threads ---
     logging.info("Starting background message processing thread...")
@@ -187,4 +150,3 @@ if __name__ == "__main__":
     # --- Run Flask App ---
     logging.info("Starting Flask server for metrics on port 8000...")
     app.run(host='0.0.0.0', port=8000)
-

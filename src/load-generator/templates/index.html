@@ -49,7 +49,8 @@
         }
         .slider-value {
             font-weight: bold;
-            min-width: 30px;
+            min-width: 40px; /* Increased width to prevent jitter */
+            text-align: right;
         }
         .button-group {
             display: flex;
@@ -78,6 +79,7 @@
             text-align: center;
             font-weight: bold;
             margin-bottom: 1.5rem;
+            word-wrap: break-word; /* Ensure long status text wraps */
         }
         .footer {
             text-align: center;
@@ -110,9 +112,25 @@
         </div>
 
         <div class="control-group">
-            <label for="errorSlider">Error Rate (%): <span id="errorValue" class="slider-value">0</span></label>
+            <label for="errorSlider">Failure Rate (%): <span id="errorValue" class="slider-value">0</span></label>
             <div class="slider-container">
                 <input type="range" id="errorSlider" min="0" max="100" value="0">
+            </div>
+        </div>
+
+        <!-- New Latency Slider -->
+        <div class="control-group">
+            <label for="latencySlider">Latency (ms): <span id="latencyValue" class="slider-value">0</span></label>
+            <div class="slider-container">
+                <input type="range" id="latencySlider" min="0" max="5000" step="100" value="0">
+            </div>
+        </div>
+
+        <!-- New Corruption Slider -->
+        <div class="control-group">
+            <label for="corruptionSlider">Corruption Rate (%): <span id="corruptionValue" class="slider-value">0</span></label>
+            <div class="slider-container">
+                <input type="range" id="corruptionSlider" min="0" max="100" value="0">
             </div>
         </div>
 
@@ -127,8 +145,14 @@
     <script>
         const rpmSlider = document.getElementById('rpmSlider');
         const errorSlider = document.getElementById('errorSlider');
+        const latencySlider = document.getElementById('latencySlider');
+        const corruptionSlider = document.getElementById('corruptionSlider');
+        
         const rpmValue = document.getElementById('rpmValue');
         const errorValue = document.getElementById('errorValue');
+        const latencyValue = document.getElementById('latencyValue');
+        const corruptionValue = document.getElementById('corruptionValue');
+
         const startBtn = document.getElementById('startBtn');
         const stopBtn = document.getElementById('stopBtn');
         const invokeOnceBtn = document.getElementById('invokeOnceBtn');
@@ -136,13 +160,15 @@
 
         rpmSlider.oninput = () => rpmValue.textContent = rpmSlider.value;
         errorSlider.oninput = () => errorValue.textContent = errorSlider.value;
+        latencySlider.oninput = () => latencyValue.textContent = latencySlider.value;
+        corruptionSlider.oninput = () => corruptionValue.textContent = corruptionSlider.value;
 
         async function updateStatus() {
             try {
                 const response = await fetch('/status');
                 const data = await response.json();
                 if (data.running) {
-                    statusBar.textContent = `Status: Running (${data.rpm} RPM, ${data.error_rate}% Errors)`;
+                    statusBar.textContent = `Status: Running (${data.rpm} RPM, ${data.error_rate}% Fail, ${data.latency_ms}ms Latency, ${data.corruption_rate}% Corrupt)`;
                     statusBar.style.backgroundColor = '#d4edda'; // Greenish
                 } else {
                     statusBar.textContent = 'Status: Stopped';
@@ -161,7 +187,9 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     rpm: parseInt(rpmSlider.value),
-                    error_rate: parseInt(errorSlider.value)
+                    error_rate: parseInt(errorSlider.value),
+                    latency_ms: parseInt(latencySlider.value),
+                    corruption_rate: parseInt(corruptionSlider.value)
                 })
             });
             updateStatus();
@@ -175,11 +203,16 @@
         invokeOnceBtn.onclick = async () => {
             invokeOnceBtn.disabled = true;
             invokeOnceBtn.textContent = 'Invoking...';
-            await fetch('/invoke-once', { method: 'POST' });
-            setTimeout(() => {
-                invokeOnceBtn.disabled = false;
-                invokeOnceBtn.textContent = 'Invoke Once';
-            }, 1000);
+            try {
+                await fetch('/invoke-once', { method: 'POST' });
+            } catch (error) {
+                console.error('Invoke once failed:', error);
+            } finally {
+                setTimeout(() => {
+                    invokeOnceBtn.disabled = false;
+                    invokeOnceBtn.textContent = 'Invoke Once';
+                }, 1000);
+            }
         };
 
         // Initial status check and periodic updates

@@ -7,13 +7,7 @@
   - [Application & Signal Flow](#application--signal-flow)
   - [Network Topology](#network-topology)
 - [Deployment Steps](#deployment-steps)
-  - [1. Prerequisites](#1-prerequisites)
-  - [2. Infrastructure Deployment](#2-infrastructure-deployment)
-  - [3. EKS Cluster Setup](#3-eks-cluster-setup)
-  - [4. Container Image Creation & Upload](#4-container-image-creation--upload)
-  - [5. Kubernetes Application Deployment](#5-kubernetes-application-deployment)
-  - [6. Host Application Deployment](#6-host-application-deployment)
-  - [7. Using the Web UI](#7-using-the-web-ui)
+- [Local Development](#local-development)
 - [Notes](#notes)
   - [Connecting via Session Manager (RDP Port Forwarding)](#connecting-via-session-manager-rdp-port-forwarding)
   - [Environment Cleanup](#environment-cleanup)
@@ -38,6 +32,11 @@ This environment allows you to test a vendor's ability to:
 telemetry-hub/
 ├── .gitignore                # Specifies intentionally untracked files to ignore.
 ├── README.md                 # This file.
+│
+├── dev/                      # Resources for local, accelerated development.
+│   ├── README.md               # Instructions for the local dev environment.
+│   ├── docker-compose.yml      # Runs a local PostgreSQL database for testing.
+│   └── cloudformation-dev.yml  # A minimal CloudFormation stack for a dev RDS instance.
 │
 ├── infrastructure/           # Infrastructure as Code (IaC) for AWS resources.
 │   ├── cloudformation.yml      # CloudFormation template for VPCs, TGW, EC2, RDS, etc.
@@ -131,6 +130,8 @@ graph TD
 ---
 
 ## Deployment Steps
+
+This section describes the process for deploying the full, multi-component application stack to AWS. For a faster, iterative development workflow, see the [Local Development](#local-development) section below.
 
 ### 1. Prerequisites
 
@@ -351,13 +352,45 @@ The web UI has two main sections:
 2.  **Dynamic Load Generator:**
     * **Status Bar:** Shows whether the load generator is currently `Running` or `Stopped`. It automatically refreshes every 5 seconds to provide near real-time status.
     * **Requests per Minute Slider:** Controls the rate of message generation. You can adjust this from 1 to 300 messages per minute.
-    * **Error Rate (%) Slider:** Controls the percentage of simulated failures. For example, a setting of `10` means that approximately 10% of the requests per minute will be intentionally failed (a log message will be generated, but no message will be sent to SQS). This is useful for testing error reporting and alerting.
+    * **Failure Rate (%) Slider:** Controls the percentage of simulated failures. For example, a setting of `10` means that approximately 10% of the requests per minute will be intentionally failed (a log message will be generated, but no message will be sent to SQS). This is useful for testing error reporting and alerting.
+    * **Latency (ms) Slider:** Controls the amount of artificial delay (in milliseconds) to inject before sending a message. This simulates network or service degradation.
+    * **Corruption Rate (%) Slider:** Controls the percentage of messages that will be intentionally sent with a malformed body. This is useful for testing error handling and dead-letter queue functionality.
     * **Start Load Button:** Starts the continuous load generation using the current values of the sliders.
     * **Stop Load Button:** Stops the load generation.
 
 ---
 
-## Environment Cleanup
+## Local Development
+
+To accelerate development and avoid long feedback loops from deploying the full cloud infrastructure, a local development environment is provided in the `/dev` directory. This is highly recommended for iterating on application code, especially for the `go-exporter`.
+
+For detailed instructions, please see the [**`dev/README.md`**](./dev/README.md) file.
+
+---
+
+## Notes
+
+### Connecting via Session Manager (RDP Port Forwarding)
+
+For a graphical interface to the Windows VM, you can use Session Manager to forward the RDP port to your local machine.
+
+1.  **Start the port forwarding session:**
+    ```bash
+    # Get the Instance ID
+    WINDOWS_INSTANCE_ID=$(aws cloudformation describe-stacks --stack-name TelemetryHubStack --query "Stacks[0].Outputs[?OutputKey=='WindowsInstanceId'].OutputValue" --output text)
+
+    # Start the session
+    aws ssm start-session \
+        --target $WINDOWS_INSTANCE_ID \
+        --document-name AWS-StartPortForwardingSession \
+        --parameters '{"portNumber":["3389"], "localPortNumber":["9999"]}'
+    ```
+2.  **Connect with an RDP client:**
+    * Open your preferred RDP client (e.g., Microsoft Remote Desktop).
+    * Connect to `localhost:9999`.
+    * You will need to retrieve the administrator password from the EC2 console to log in.
+
+### Environment Cleanup
 
 To delete all the AWS resources created by this project, you must remove the EKS cluster resources *before* deleting the underlying networking stack with CloudFormation.
 
@@ -427,3 +460,49 @@ This section covers common issues you might encounter during deployment.
 - **Solution:**
     1.  **Check Environment Variables:** The most common issue is that the required environment variables (`DB_HOST`, `DB_PASSWORD`, `SQS_QUEUE_URL`) are not set correctly in your shell session. Double-check that you have exported them correctly.
     2.  **Check Security Groups:** Ensure the security groups for the RDS instance and the EC2 instances allow traffic between them on the correct ports (5432 for PostgreSQL). The CloudFormation template should handle this, but network connectivity is a common culprit.
+
+### Viewing Application Logs
+
+When troubleshooting, the first step is always to check the application logs. Here is how to access them for each component.
+
+#### Kubernetes Pods (Load Generator & Python Processor)
+
+You can view the logs for the applications running in EKS using `kubectl`.
+
+-   **View Load Generator Logs:**
+    ```bash
+    kubectl logs -l app=load-generator
+    ```
+-   **View Python Processor Logs:**
+    ```bash
+    kubectl logs -l app=python-processor
+    ```
+-   To stream the logs in real-time, add the `-f` flag (e.g., `kubectl logs -f -l app=load-generator`).
+
+#### Linux VM (Go Exporter)
+
+The Go application was started with `nohup`, which redirects its output to a file named `nohup.out`.
+
+1.  **Connect to the Linux VM** using Session Manager as described in the deployment steps.
+2.  **View the log file:**
+    ```bash
+    cat ~/telemetry-hub/src/go-exporter/nohup.out
+    ```
+3.  To stream the logs in real-time, use `tail`:
+    ```bash
+    tail -f ~/telemetry-hub/src/go-exporter/nohup.out
+    ```
+
+#### Windows VM (C# Producer)
+
+The C# application was started as a background job in PowerShell.
+
+1.  **Connect to the Windows VM** using Session Manager.
+2.  **Check the status of the job:**
+    ```powershell
+    Get-Job
+    ```
+3.  **Retrieve the output from the job.** Replace `<ID>` with the ID number you see from `Get-Job`.
+    ```powershell
+    Receive-Job -Id <ID>
+    ```
