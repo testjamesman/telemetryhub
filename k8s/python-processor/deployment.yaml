@@ -34,7 +34,7 @@ spec:
         - name: DB_HOST
           value: "YOUR_RDS_ENDPOINT"
         - name: DB_NAME
-          value: "postgres" # Or your specific DB name if changed
+          value: "telemetryhubdb" # Or your specific DB name if changed
         - name: DB_USER
           value: "dbadmin"
         - name: DB_PASSWORD

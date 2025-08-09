@@ -46,9 +46,10 @@ echo "Using AWS Region: ${AWS_REGION}"
 # --- Step 1: Retrieve Network Configuration from CloudFormation ---
 echo "--- Retrieving Network Configuration from CloudFormation ---"
 VPC_ID=$(aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --query "Stacks[0].Outputs[?OutputKey=='VPCAId'].OutputValue" --output text --region "${AWS_REGION}")
-SUBNET_ID=$(aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --query "Stacks[0].Outputs[?OutputKey=='EKSSubnetId'].OutputValue" --output text --region "${AWS_REGION}")
+# CORRECTED: Query for the plural 'EKSSubnetIds' output
+SUBNET_IDS=$(aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --query "Stacks[0].Outputs[?OutputKey=='EKSSubnetIds'].OutputValue" --output text --region "${AWS_REGION}")
 
-if [ -z "$VPC_ID" ] || [ -z "$SUBNET_ID" ]; then
+if [ -z "$VPC_ID" ] || [ -z "$SUBNET_IDS" ]; then
     echo "❌ Error: Could not retrieve VPC and Subnet details from CloudFormation stack '${STACK_NAME}'."
     echo "Please ensure the stack deployed successfully."
     exit 1
@@ -62,25 +63,33 @@ echo "This process can take 15-20 minutes. Please wait..."
 eksctl create cluster \
   --name "${CLUSTER_NAME}" \
   --region "${AWS_REGION}" \
-  --vpc-private-subnets "${SUBNET_ID}" \
+  --vpc-private-subnets "${SUBNET_IDS}" \
   --without-nodegroup
 
 echo "✅ EKS control plane created successfully."
 
 
-# --- Step 3: Create EKS Node Group ---
+# --- Step 3: Enable IAM OIDC Provider for the Cluster ---
+echo "--- Enabling OIDC Provider for IAM Roles for Service Accounts ---"
+eksctl utils associate-iam-oidc-provider --cluster "${CLUSTER_NAME}" --region "${AWS_REGION}" --approve
+
+echo "✅ OIDC provider associated successfully."
+
+
+# --- Step 4: Create EKS Node Group ---
 echo "--- Creating EKS Node Group: ${NODEGROUP_NAME} ---"
 eksctl create nodegroup \
   --cluster "${CLUSTER_NAME}" \
   --region "${AWS_REGION}" \
   --name "${NODEGROUP_NAME}" \
   --node-type t3.medium \
-  --nodes 2
+  --nodes 2 \
+  --node-private-networking
 
 echo "✅ EKS node group created successfully."
 
 
-# --- Step 4: Verify Cluster Access ---
+# --- Step 5: Verify Cluster Access ---
 echo "--- Verifying Cluster Access ---"
 echo "Your ~/.kube/config has been updated. Verifying connection to the cluster..."
 kubectl get nodes

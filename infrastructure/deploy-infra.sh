@@ -24,6 +24,14 @@ echo "--- Gathering Configuration ---"
 STACK_NAME="TelemetryHubStack"
 TEMPLATE_FILE="cloudformation.yml"
 
+# Check for AWS CLI
+if ! command -v aws &> /dev/null
+then
+    echo "Error: AWS CLI is not installed. Please install it to continue."
+    exit 1
+fi
+echo "✅ AWS CLI found."
+
 # Check for AWS Region
 if [ -z "$AWS_REGION" ]; then
     AWS_REGION=$(aws configure get region 2>/dev/null)
@@ -100,7 +108,7 @@ echo "--- Deploying CloudFormation stack: ${STACK_NAME} ---"
 aws cloudformation deploy \
   --template-file "${TEMPLATE_FILE}" \
   --stack-name "${STACK_NAME}" \
-  --capabilities CAPABILITY_IAM \
+  --capabilities CAPABILITY_NAMED_IAM \
   --region "${AWS_REGION}" \
   --parameter-overrides \
     MyIP="${MY_IP}" \
@@ -111,4 +119,3 @@ aws cloudformation wait stack-create-complete --stack-name "${STACK_NAME}" --reg
 
 echo "--- Deployment Complete. Stack Outputs: ---"
 aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --query "Stacks[0].Outputs" --output table --region "${AWS_REGION}"
-

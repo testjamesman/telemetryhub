@@ -29,6 +29,14 @@ Parameters:
     Description: Master password for the RDS database. Will be visible in the console.
     Default: ChangeMe123
     MinLength: 8
+  
+  GoExporterPackageUrl:
+    Type: String
+    Description: The pre-signed S3 URL for the go-exporter package.
+
+  CSharpProducerPackageUrl:
+    Type: String
+    Description: The pre-signed S3 URL for the csharp-producer package.
 
 Resources:
   #----------------------------------------------------------------
@@ -47,6 +55,14 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: SqsSendMessagePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'sqs:SendMessage'
+                Resource: !GetAtt SqsQueue.Arn
 
   SSMInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -64,7 +80,9 @@ Resources:
       CidrBlock: 10.10.0.0/16
       EnableDnsSupport: true
       EnableDnsHostnames: true
-      Tags: [{Key: Name, Value: TelemetryHub-VPC-A-EKS}]
+      Tags:
+        - {Key: Name, Value: TelemetryHub-VPC-A-EKS}
+        - {Key: kubernetes.io/cluster/telemetry-hub-cluster, Value: shared}
 
   VPCB:
     Type: AWS::EC2::VPC
@@ -85,13 +103,73 @@ Resources:
   # --- Subnets for each VPC ---
   SubnetA1:
     Type: AWS::EC2::Subnet
-    Properties: {VpcId: !Ref VPCA, CidrBlock: 10.10.1.0/24, AvailabilityZone: !Select [0, !GetAZs '']}
-  SubnetB1:
+    Properties:
+      VpcId: !Ref VPCA
+      CidrBlock: 10.10.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - {Key: kubernetes.io/role/elb, Value: "1"}
+  SubnetA2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPCA
+      CidrBlock: 10.10.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - {Key: kubernetes.io/role/elb, Value: "1"}
+
+  SubnetB1Private:
     Type: AWS::EC2::Subnet
     Properties: {VpcId: !Ref VPCB, CidrBlock: 10.20.1.0/24, AvailabilityZone: !Select [0, !GetAZs '']}
-  SubnetC1:
+  SubnetB1Public:
+    Type: AWS::EC2::Subnet
+    Properties: {VpcId: !Ref VPCB, CidrBlock: 10.20.2.0/24, AvailabilityZone: !Select [0, !GetAZs ''], MapPublicIpOnLaunch: true}
+  
+  SubnetC1Private:
     Type: AWS::EC2::Subnet
     Properties: {VpcId: !Ref VPCC, CidrBlock: 10.30.1.0/24, AvailabilityZone: !Select [0, !GetAZs '']}
+  SubnetC2Private:
+    Type: AWS::EC2::Subnet
+    Properties: {VpcId: !Ref VPCC, CidrBlock: 10.30.2.0/24, AvailabilityZone: !Select [1, !GetAZs '']}
+  SubnetC1Public:
+    Type: AWS::EC2::Subnet
+    Properties: {VpcId: !Ref VPCC, CidrBlock: 10.30.3.0/24, AvailabilityZone: !Select [0, !GetAZs ''], MapPublicIpOnLaunch: true}
+  SubnetC2Public:
+    Type: AWS::EC2::Subnet
+    Properties: {VpcId: !Ref VPCC, CidrBlock: 10.30.4.0/24, AvailabilityZone: !Select [1, !GetAZs ''], MapPublicIpOnLaunch: true}
+
+  # --- Internet and NAT Gateways ---
+  InternetGatewayA:
+    Type: AWS::EC2::InternetGateway
+  VPCGatewayAttachmentA:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: {VpcId: !Ref VPCA, InternetGatewayId: !Ref InternetGatewayA}
+
+  InternetGatewayB:
+    Type: AWS::EC2::InternetGateway
+  VPCGatewayAttachmentB:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: {VpcId: !Ref VPCB, InternetGatewayId: !Ref InternetGatewayB}
+  NatGatewayEIPB:
+    Type: AWS::EC2::EIP
+    Properties: {Domain: vpc}
+  NatGatewayB:
+    Type: AWS::EC2::NatGateway
+    Properties: {AllocationId: !GetAtt NatGatewayEIPB.AllocationId, SubnetId: !Ref SubnetB1Public}
+
+  InternetGatewayC:
+    Type: AWS::EC2::InternetGateway
+  VPCGatewayAttachmentC:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: {VpcId: !Ref VPCC, InternetGatewayId: !Ref InternetGatewayC}
+  NatGatewayEIPC:
+    Type: AWS::EC2::EIP
+    Properties: {Domain: vpc}
+  NatGatewayC:
+    Type: AWS::EC2::NatGateway
+    Properties: {AllocationId: !GetAtt NatGatewayEIPC.AllocationId, SubnetId: !Ref SubnetC1Public}
 
   # --- Transit Gateway ---
   TransitGateway:
@@ -104,26 +182,36 @@ Resources:
 
   TGWAttachmentA:
     Type: AWS::EC2::TransitGatewayAttachment
-    Properties: {VpcId: !Ref VPCA, SubnetIds: [!Ref SubnetA1], TransitGatewayId: !Ref TransitGateway}
+    Properties: {VpcId: !Ref VPCA, SubnetIds: [!Ref SubnetA1, !Ref SubnetA2], TransitGatewayId: !Ref TransitGateway}
   TGWAttachmentB:
     Type: AWS::EC2::TransitGatewayAttachment
-    Properties: {VpcId: !Ref VPCB, SubnetIds: [!Ref SubnetB1], TransitGatewayId: !Ref TransitGateway}
+    Properties: {VpcId: !Ref VPCB, SubnetIds: [!Ref SubnetB1Private], TransitGatewayId: !Ref TransitGateway}
   TGWAttachmentC:
     Type: AWS::EC2::TransitGatewayAttachment
-    Properties: {VpcId: !Ref VPCC, SubnetIds: [!Ref SubnetC1], TransitGatewayId: !Ref TransitGateway}
+    Properties: {VpcId: !Ref VPCC, SubnetIds: [!Ref SubnetC1Private, !Ref SubnetC2Private], TransitGatewayId: !Ref TransitGateway}
 
-  # --- Route Tables to direct traffic to the TGW ---
+  # --- Route Tables ---
   RouteTableA:
     Type: AWS::EC2::RouteTable
     Properties: {VpcId: !Ref VPCA}
-  RouteTableB:
+  RouteTableBPrivate:
     Type: AWS::EC2::RouteTable
     Properties: {VpcId: !Ref VPCB}
-  RouteTableC:
+  RouteTableBPublic:
+    Type: AWS::EC2::RouteTable
+    Properties: {VpcId: !Ref VPCB}
+  RouteTableCPrivate:
+    Type: AWS::EC2::RouteTable
+    Properties: {VpcId: !Ref VPCC}
+  RouteTableCPublic:
     Type: AWS::EC2::RouteTable
     Properties: {VpcId: !Ref VPCC}
 
   # --- Routes ---
+  DefaultRouteA:
+    Type: AWS::EC2::Route
+    Properties: {RouteTableId: !Ref RouteTableA, DestinationCidrBlock: '0.0.0.0/0', GatewayId: !Ref InternetGatewayA}
+    DependsOn: VPCGatewayAttachmentA
   RouteAtoB:
     Type: AWS::EC2::Route
     Properties: {RouteTableId: !Ref RouteTableA, DestinationCidrBlock: !GetAtt VPCB.CidrBlock, TransitGatewayId: !Ref TransitGateway}
@@ -132,33 +220,64 @@ Resources:
     Type: AWS::EC2::Route
     Properties: {RouteTableId: !Ref RouteTableA, DestinationCidrBlock: !GetAtt VPCC.CidrBlock, TransitGatewayId: !Ref TransitGateway}
     DependsOn: TGWAttachmentA
+  
   RouteBtoA:
     Type: AWS::EC2::Route
-    Properties: {RouteTableId: !Ref RouteTableB, DestinationCidrBlock: !GetAtt VPCA.CidrBlock, TransitGatewayId: !Ref TransitGateway}
+    Properties: {RouteTableId: !Ref RouteTableBPrivate, DestinationCidrBlock: !GetAtt VPCA.CidrBlock, TransitGatewayId: !Ref TransitGateway}
     DependsOn: TGWAttachmentB
   RouteBtoC:
     Type: AWS::EC2::Route
-    Properties: {RouteTableId: !Ref RouteTableB, DestinationCidrBlock: !GetAtt VPCC.CidrBlock, TransitGatewayId: !Ref TransitGateway}
+    Properties: {RouteTableId: !Ref RouteTableBPrivate, DestinationCidrBlock: !GetAtt VPCC.CidrBlock, TransitGatewayId: !Ref TransitGateway}
     DependsOn: TGWAttachmentB
+  DefaultRouteBPrivate:
+    Type: AWS::EC2::Route
+    Properties: {RouteTableId: !Ref RouteTableBPrivate, DestinationCidrBlock: '0.0.0.0/0', NatGatewayId: !Ref NatGatewayB}
+  DefaultRouteBPublic:
+    Type: AWS::EC2::Route
+    Properties: {RouteTableId: !Ref RouteTableBPublic, DestinationCidrBlock: '0.0.0.0/0', GatewayId: !Ref InternetGatewayB}
+    DependsOn: VPCGatewayAttachmentB
+
   RouteCtoA:
     Type: AWS::EC2::Route
-    Properties: {RouteTableId: !Ref RouteTableC, DestinationCidrBlock: !GetAtt VPCA.CidrBlock, TransitGatewayId: !Ref TransitGateway}
+    Properties: {RouteTableId: !Ref RouteTableCPrivate, DestinationCidrBlock: !GetAtt VPCA.CidrBlock, TransitGatewayId: !Ref TransitGateway}
     DependsOn: TGWAttachmentC
   RouteCtoB:
     Type: AWS::EC2::Route
-    Properties: {RouteTableId: !Ref RouteTableC, DestinationCidrBlock: !GetAtt VPCB.CidrBlock, TransitGatewayId: !Ref TransitGateway}
+    Properties: {RouteTableId: !Ref RouteTableCPrivate, DestinationCidrBlock: !GetAtt VPCB.CidrBlock, TransitGatewayId: !Ref TransitGateway}
     DependsOn: TGWAttachmentC
+  DefaultRouteCPrivate:
+    Type: AWS::EC2::Route
+    Properties: {RouteTableId: !Ref RouteTableCPrivate, DestinationCidrBlock: '0.0.0.0/0', NatGatewayId: !Ref NatGatewayC}
+  DefaultRouteCPublic:
+    Type: AWS::EC2::Route
+    Properties: {RouteTableId: !Ref RouteTableCPublic, DestinationCidrBlock: '0.0.0.0/0', GatewayId: !Ref InternetGatewayC}
+    DependsOn: VPCGatewayAttachmentC
 
   # --- Subnet Route Table Associations ---
-  SubnetRouteAssocA:
+  SubnetRouteAssocA1:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties: {SubnetId: !Ref SubnetA1, RouteTableId: !Ref RouteTableA}
-  SubnetRouteAssocB:
+  SubnetRouteAssocA2:
     Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties: {SubnetId: !Ref SubnetB1, RouteTableId: !Ref RouteTableB}
-  SubnetRouteAssocC:
+    Properties: {SubnetId: !Ref SubnetA2, RouteTableId: !Ref RouteTableA}
+  SubnetRouteAssocB1Private:
     Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties: {SubnetId: !Ref SubnetC1, RouteTableId: !Ref RouteTableC}
+    Properties: {SubnetId: !Ref SubnetB1Private, RouteTableId: !Ref RouteTableBPrivate}
+  SubnetRouteAssocB1Public:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref SubnetB1Public, RouteTableId: !Ref RouteTableBPublic}
+  SubnetRouteAssocC1Private:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref SubnetC1Private, RouteTableId: !Ref RouteTableCPrivate}
+  SubnetRouteAssocC2Private:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref SubnetC2Private, RouteTableId: !Ref RouteTableCPrivate}
+  SubnetRouteAssocC1Public:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref SubnetC1Public, RouteTableId: !Ref RouteTableCPublic}
+  SubnetRouteAssocC2Public:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref SubnetC2Public, RouteTableId: !Ref RouteTableCPublic}
 
   #----------------------------------------------------------------
   # SECURITY - Security Groups
@@ -169,8 +288,8 @@ Resources:
       GroupDescription: Allow RDP from MyIP
       VpcId: !Ref VPCB
       SecurityGroupIngress:
-        # This rule is a fallback for direct RDP. Session Manager access is handled by the IAM role.
         - {IpProtocol: tcp, FromPort: 3389, ToPort: 3389, CidrIp: !Ref MyIP}
+    DependsOn: [TGWAttachmentA, TGWAttachmentB, TGWAttachmentC]
 
   LinuxSG:
     Type: AWS::EC2::SecurityGroup
@@ -180,54 +299,26 @@ Resources:
       SecurityGroupIngress:
         - {IpProtocol: tcp, FromPort: 22, ToPort: 22, CidrIp: !Ref MyIP}
         - {IpProtocol: tcp, FromPort: 8080, ToPort: 8080, CidrIp: !GetAtt VPCA.CidrBlock}
+    DependsOn: [TGWAttachmentA, TGWAttachmentB, TGWAttachmentC]
 
   RdsSG:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow PostgreSQL from VPC A and VPC C
+      GroupDescription: Allow PostgreSQL from anywhere
       VpcId: !Ref VPCC
       SecurityGroupIngress:
-        - {IpProtocol: tcp, FromPort: 5432, ToPort: 5432, CidrIp: !GetAtt VPCA.CidrBlock}
-        - {IpProtocol: tcp, FromPort: 5432, ToPort: 5432, CidrIp: !GetAtt VPCC.CidrBlock}
+        - {IpProtocol: tcp, FromPort: 5432, ToPort: 5432, CidrIp: "0.0.0.0/0"}
+    DependsOn: [TGWAttachmentA, TGWAttachmentB, TGWAttachmentC]
 
-  #----------------------------------------------------------------
-  # COMPUTE - EC2 Instances
-  #----------------------------------------------------------------
-  WindowsInstance:
-    Type: AWS::EC2::Instance
+  NodeSG:
+    Type: AWS::EC2::SecurityGroup
     Properties:
-      InstanceType: t3.medium
-      ImageId: !Ref WindowsAmiId
-      IamInstanceProfile: !Ref SSMInstanceProfile
-      SubnetId: !Ref SubnetB1
-      SecurityGroupIds: [!Ref WindowsSG]
-      Tags: [{Key: Name, Value: TelemetryHub-Windows-Producer}]
-      UserData:
-        Fn::Base64: !Sub |
-          <powershell>
-          # Download and install .NET 6 SDK silently
-          $ProgressPreference = 'SilentlyContinue'
-          Invoke-WebRequest -Uri https://dot.net/v1/dotnet-install.ps1 -OutFile .\\dotnet-install.ps1
-          .\\dotnet-install.ps1 -Channel 6.0 -InstallDir 'C:\Program Files\dotnet'
-          # Add dotnet to the system PATH
-          $newPath = ('C:\Program Files\dotnet', [Environment]::GetEnvironmentVariable('PATH', 'Machine')) -join ';'
-          [Environment]::SetEnvironmentVariable('PATH', $newPath, 'Machine')
-          </powershell>
-
-  LinuxInstance:
-    Type: AWS::EC2::Instance
-    Properties:
-      InstanceType: t3.micro
-      ImageId: !Ref LinuxAmiId
-      IamInstanceProfile: !Ref SSMInstanceProfile
-      SubnetId: !Ref SubnetC1
-      SecurityGroupIds: [!Ref LinuxSG]
-      Tags: [{Key: Name, Value: TelemetryHub-Linux-Exporter}]
-      UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash -xe
-          yum update -y
-          yum install -y golang git
+      GroupDescription: SG for EKS worker nodes
+      VpcId: !Ref VPCA
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          CidrIp: !GetAtt VPCA.CidrBlock
+    DependsOn: VPCA
 
   #----------------------------------------------------------------
   # DATA & MESSAGING - SQS and RDS
@@ -241,21 +332,82 @@ Resources:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
       DBSubnetGroupDescription: Subnet group for Telemetry Hub RDS
-      SubnetIds: [!Ref SubnetC1]
+      SubnetIds: [!Ref SubnetC1Public, !Ref SubnetC2Public]
+    DependsOn: [SubnetRouteAssocC1Public, SubnetRouteAssocC2Public]
 
   RdsInstance:
     Type: AWS::RDS::DBInstance
     Properties:
       DBInstanceIdentifier: telemetry-hub-db
+      DBName: telemetryhubdb
       DBInstanceClass: db.t3.micro
       Engine: postgres
-      EngineVersion: '15.3'
+      EngineVersion: '16'
       AllocatedStorage: '20'
       DBSubnetGroupName: !Ref RdsDbSubnetGroup
       VPCSecurityGroups: [!Ref RdsSG]
       MasterUsername: !Ref DbMasterUsername
       MasterUserPassword: !Ref DbMasterPassword
-      PubliclyAccessible: false
+      PubliclyAccessible: true
+      EnableIAMDatabaseAuthentication: true
+    DependsOn: [RdsDbSubnetGroup, RdsSG]
+
+  #----------------------------------------------------------------
+  # COMPUTE - EC2 Instances
+  #----------------------------------------------------------------
+  WindowsInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.medium
+      ImageId: !Ref WindowsAmiId
+      IamInstanceProfile: !Ref SSMInstanceProfile
+      SubnetId: !Ref SubnetB1Private
+      SecurityGroupIds: [!Ref WindowsSG]
+      Tags: [{Key: Name, Value: TelemetryHub-Windows-Producer}]
+      UserData:
+        Fn::Base64: !Sub |
+          <powershell>
+          # Download and install .NET 6 SDK silently
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -Uri https://dot.net/v1/dotnet-install.ps1 -OutFile .\\dotnet-install.ps1
+          .\\dotnet-install.ps1 -Channel 6.0 -InstallDir 'C:\Program Files\dotnet'
+          # Add dotnet to the system PATH
+          $newPath = ('C:\Program Files\dotnet', [Environment]::GetEnvironmentVariable('PATH', 'Machine')) -join ';'
+          [Environment]::SetEnvironmentVariable('PATH', $newPath, 'Machine')
+          
+          # Download and extract the application
+          $appDir = "C:\Users\Administrator\telemetry-hub"
+          New-Item -ItemType Directory -Path $appDir
+          Invoke-WebRequest -Uri "${CSharpProducerPackageUrl}" -OutFile "$appDir\csharp-producer.zip"
+          Expand-Archive -Path "$appDir\csharp-producer.zip" -DestinationPath $appDir
+          </powershell>
+    DependsOn: [WindowsSG, SSMInstanceProfile, RdsInstance]
+
+  LinuxInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LinuxAmiId
+      IamInstanceProfile: !Ref SSMInstanceProfile
+      SubnetId: !Ref SubnetC1Private
+      SecurityGroupIds: [!Ref LinuxSG]
+      Tags: [{Key: Name, Value: TelemetryHub-Linux-Exporter}]
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          yum update -y
+          yum install -y golang
+          
+          # Download and extract the application
+          cd /home/ssm-user
+          curl -L "${GoExporterPackageUrl}" -o go-exporter.tar.gz
+          mkdir -p telemetry-hub/src/go-exporter
+          tar -xzvf go-exporter.tar.gz -C telemetry-hub/src/go-exporter
+          chown -R ssm-user:ssm-user telemetry-hub
+          
+          # Set environment variables and run the app as a service in a future step
+          
+    DependsOn: [LinuxSG, SSMInstanceProfile, RdsInstance]
 
   #----------------------------------------------------------------
   # IAM - Role for EKS Pod
@@ -293,9 +445,12 @@ Outputs:
   VPCCId:
     Description: VPC ID for Linux Host and Data
     Value: !Ref VPCC
-  EKSSubnetId:
-    Description: Subnet ID for EKS Cluster
-    Value: !Ref SubnetA1
+  EKSSubnetIds:
+    Description: Comma-separated list of Subnet IDs for the EKS Cluster
+    Value: !Sub "${SubnetA1},${SubnetA2}"
+  NodeSGroupId:
+    Description: Security Group ID for the EKS worker nodes
+    Value: !Ref NodeSG
   WindowsInstanceId:
     Description: Instance ID of the Windows VM
     Value: !Ref WindowsInstance

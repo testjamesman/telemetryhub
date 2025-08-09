@@ -10,9 +10,9 @@
   - [1. Prerequisites](#1-prerequisites)
   - [2. Infrastructure Deployment](#2-infrastructure-deployment)
   - [3. EKS Cluster Setup](#3-eks-cluster-setup)
-  - [4. Container Image Setup](#4-container-image-setup)
-  - [5. Application Deployment (Kubernetes)](#5-application-deployment-kubernetes)
-  - [6. Application Deployment (Hosts)](#6-application-deployment-hosts)
+  - [4. Container Image Creation & Upload](#4-container-image-creation--upload)
+  - [5. Kubernetes Application Deployment](#5-kubernetes-application-deployment)
+  - [6. Host Application Deployment](#6-host-application-deployment)
   - [7. Using the Web UI](#7-using-the-web-ui)
 - [Notes](#notes)
   - [Connecting via Session Manager (RDP Port Forwarding)](#connecting-via-session-manager-rdp-port-forwarding)
@@ -158,7 +158,7 @@ The deployment scripts can be run non-interactively by setting the following env
 **Remote Hosts (for application configuration):**
 - `DB_HOST`: The RDS endpoint address.
 - `DB_USER`: The username for the RDS database (`dbadmin`).
-- `DB_NAME`: The name of the RDS database (`postgres`).
+- `DB_NAME`: The name of the RDS database (`telemetryhubdb`).
 - `DB_PASSWORD`: The master password for the RDS database.
 - `SQS_QUEUE_URL`: The URL of the SQS queue.
 
@@ -206,7 +206,7 @@ This step creates the EKS cluster and a default node group.
     ```
 5.  **Wait for completion.** The script will create the EKS control plane and the node group. This process can take 20-25 minutes.
 
-### 4. Container Image Setup
+### 4. Container Image Creation & Upload
 
 This step builds both the `python-processor` and `load-generator` applications and pushes their container images to Amazon ECR.
 
@@ -242,7 +242,7 @@ This step builds both the `python-processor` and `load-generator` applications a
         ./build-and-push.sh
         ```
 
-### 5. Application Deployment (Kubernetes)
+### 5. Kubernetes Application Deployment
 
 This step deploys both the `python-processor` and `load-generator` containers to the EKS cluster.
 
@@ -260,7 +260,7 @@ This step deploys both the `python-processor` and `load-generator` containers to
     ```
 4.  **Get the Web UI URL.** The script will wait for all pods to be ready and for the AWS Load Balancer to be provisioned. It will then print the public URL for the Load Generator web UI.
 
-### 6. Application Deployment (Hosts)
+### 6. Host Application Deployment
 
 This section covers deploying the applications to the standalone EC2 instances.
 
@@ -276,6 +276,7 @@ This section covers deploying the applications to the standalone EC2 instances.
     ```
 2.  **Clone the repository.** (Note: Go and Git were pre-installed by the CloudFormation template).
     ```bash
+    cd ~
     git clone https://your-repo-url/telemetry-hub.git
     cd telemetry-hub/src/go-exporter/
     ```
@@ -283,7 +284,7 @@ This section covers deploying the applications to the standalone EC2 instances.
     ```bash
     export DB_HOST=$(aws cloudformation describe-stacks --stack-name TelemetryHubStack --query "Stacks[0].Outputs[?OutputKey=='RdsEndpoint'].OutputValue" --output text --region YOUR_AWS_REGION)
     export DB_USER="dbadmin"
-    export DB_NAME="postgres" # This is the default DB name in RDS
+    export DB_NAME="telemetryhubdb"
     export DB_PASSWORD="YOUR_DB_PASSWORD"
     ```
 4.  **Build and run the application in the background.**
@@ -296,9 +297,17 @@ This section covers deploying the applications to the standalone EC2 instances.
 
 #### Windows VM (C# Producer)
 
-1.  **Connect to the Windows VM.** Use the RDP Port Forwarding instructions in the "Notes" section below.
-2.  **Clone the repository.** Open PowerShell and run:
+1.  **Connect to the Windows VM.** Use Session Manager from your local terminal to start a PowerShell session.
+    ```bash
+    # Get the Instance ID from CloudFormation outputs
+    WINDOWS_INSTANCE_ID=$(aws cloudformation describe-stacks --stack-name TelemetryHubStack --query "Stacks[0].Outputs[?OutputKey=='WindowsInstanceId'].OutputValue" --output text)
+
+    # Start an SSM session
+    aws ssm start-session --target $WINDOWS_INSTANCE_ID
+    ```
+2.  **Clone the repository.** In the PowerShell session, run:
     ```powershell
+    cd C:\Users\Administrator
     git clone https://your-repo-url/telemetry-hub.git
     cd telemetry-hub/src/csharp-producer/
     ```
@@ -318,7 +327,7 @@ This section covers deploying the applications to the standalone EC2 instances.
     # Start the application as a background job
     Start-Job -ScriptBlock { C:\Users\Administrator\telemetry-hub\src\csharp-producer\publish\DataProducer.exe }
     ```
-    The `Start-Job` command runs the application in the background. You can check the status of running jobs with `Get-Job`.
+    The `Start-Job` command runs the application in the background. You can check the status of running jobs with `Get-Job` and see their output with `Receive-Job -Id <JOB_ID>`.
 
 ### 7. Using the Web UI
 
@@ -348,30 +357,7 @@ The web UI has two main sections:
 
 ---
 
-## Notes
-
-### Connecting via Session Manager (RDP Port Forwarding)
-
-To connect to the Windows VM without exposing the RDP port directly to the internet, you can use Session Manager to forward the port to your local machine.
-
-1.  **Get the Windows Instance ID.** You can find this in the "Outputs" tab of the `TelemetryHubStack` in the CloudFormation console, or by running:
-    ```bash
-    aws cloudformation describe-stacks --stack-name TelemetryHubStack --query "Stacks[0].Outputs[?OutputKey=='WindowsInstanceId'].OutputValue" --output text
-    ```
-2.  **Start the port forwarding session.** This command opens a secure tunnel from your local machine to the Windows instance. Let this command run in its own terminal window.
-    ```bash
-    aws ssm start-session \
-      --target INSTANCE_ID_FROM_STEP_1 \
-      --document-name AWS-StartPortForwardingSession \
-      --parameters '{"portNumber":["3389"],"localPortNumber":["55678"]}'
-    ```
-3.  **Connect with an RDP client.**
-    * Open your RDP client (e.g., [Windows App](https://apps.apple.com/us/app/windows-app/id1295203466?mt=12) from the Apple Store).
-    * Create a new connection.
-    * For the PC name, enter: `localhost:55678`
-    * Connect using the default `Administrator` username and the password for the EC2 instance (which you can retrieve from the EC2 console).
-
-### Environment Cleanup
+## Environment Cleanup
 
 To delete all the AWS resources created by this project, you must remove the EKS cluster resources *before* deleting the underlying networking stack with CloudFormation.
 
@@ -391,6 +377,15 @@ To delete all the AWS resources created by this project, you must remove the EKS
     ```bash
     aws cloudformation list-stacks --query "StackSummaries[?StackName=='TelemetryHubStack'].[StackName,StackStatus]" --output text
     ```
+
+#### Unset Environment Variables
+After you have successfully deleted all cloud resources, it is good practice to unset the environment variables you may have exported on your local machine to avoid potential conflicts with other projects.
+```bash
+unset AWS_REGION
+unset AWS_ACCOUNT_ID
+unset DB_PASSWORD
+unset USE_MY_IP
+```
 
 ---
 

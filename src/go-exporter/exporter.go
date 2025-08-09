@@ -39,6 +39,13 @@ func init() {
 }
 
 func main() {
+	// Log the configuration variables for debugging purposes.
+	// IMPORTANT: Never log passwords or other secrets.
+	log.Printf("Initializing exporter with the following configuration:")
+	log.Printf("DB_HOST: %s", dbHost)
+	log.Printf("DB_USER: %s", dbUser)
+	log.Printf("DB_NAME: %s", dbName)
+
 	// Construct the database connection string from environment variables.
 	connStr := fmt.Sprintf("host=%s user=%s password=%s dbname=%s sslmode=disable", dbHost, dbUser, dbPass, dbName)
 

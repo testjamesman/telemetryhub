@@ -117,11 +117,11 @@ kubectl wait --for=condition=Ready pod -l app=python-processor --timeout=300s
 echo "✅ Python Processor pod is running."
 
 echo "Waiting for load-generator pod to become ready..."
+echo "(This can take a few minutes...)"
 kubectl wait --for=condition=Ready pod -l app=load-generator --timeout=300s
 echo "✅ Load Generator pod is running."
 
 echo "--- Waiting for Load Balancer to be provisioned ---"
-echo "(This can take a few minutes...)"
 kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' service/load-generator-service --timeout=300s
 LOAD_BALANCER_URL=$(kubectl get service load-generator-service -o=jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 
