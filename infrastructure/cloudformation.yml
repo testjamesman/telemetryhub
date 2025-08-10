@@ -385,13 +385,6 @@ Resources:
           # Download and extract the application
           Invoke-WebRequest -Uri "${CSharpProducerPackageUrl}" -OutFile "$appDir\csharp-producer.zip"
           Expand-Archive -Path "$appDir\csharp-producer.zip" -DestinationPath $appDir
-
-          # Set Environment Variable for the application
-          [System.Environment]::SetEnvironmentVariable('SQS_QUEUE_URL', '${SqsQueue}', 'Machine')
-
-          # Build and run the application in the background
-          dotnet publish -c Release -o ./publish
-          Start-Job -ScriptBlock { C:\Users\Administrator\telemetry-hub\publish\DataProducer.exe }
           </powershell>
     DependsOn: [WindowsSG, SSMInstanceProfile, RdsInstance]
 
@@ -419,24 +412,10 @@ Resources:
           curl -L "${GoExporterPackageUrl}" -o go-exporter.tar.gz
           tar -xzvf go-exporter.tar.gz
           
-          # Set environment variables for the application
-          export DB_HOST=${RdsInstance.Endpoint.Address}
-          export DB_USER=${DbMasterUsername}
-          export DB_NAME=telemetryhubdb
-          export DB_PASSWORD=${DbMasterPassword}
-          
-          # Build and run the application in the background
-          go mod tidy
-          go build -o exporter .
-          nohup ./exporter &> nohup.out &
-
-          # Ensure correct ownership
-          chown -R ssm-user:ssm-user /home/ssm-user/telemetry-hub
-          
     DependsOn: [LinuxSG, SSMInstanceProfile, RdsInstance]
 
   #----------------------------------------------------------------
-  # IAM - Role for EKS Pod
+  # IAM - Roles for EKS Pods
   #----------------------------------------------------------------
   SqsReaderRole:
     Type: AWS::IAM::Role
@@ -447,7 +426,7 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              Service: eks.amazonaws.com # Placeholder, will be updated by eksctl or manually
+              Service: eks.amazonaws.com # Placeholder, will be updated by scripts
             Action: sts:AssumeRole
       Policies:
         - PolicyName: SqsReadDeletePolicy
@@ -459,6 +438,26 @@ Resources:
                   - sqs:ReceiveMessage
                   - sqs:DeleteMessage
                   - sqs:GetQueueAttributes
+                Resource: !GetAtt SqsQueue.Arn
+
+  SqsSenderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: TelemetryHubSqsSenderRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com # Placeholder, will be updated by scripts
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SqsSendPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'sqs:SendMessage'
                 Resource: !GetAtt SqsQueue.Arn
 
 Outputs:
@@ -490,5 +489,8 @@ Outputs:
     Description: Endpoint address for the RDS database
     Value: !GetAtt RdsInstance.Endpoint.Address
   SqsReaderRoleArn:
-    Description: ARN of the IAM Role for the EKS pod
+    Description: ARN of the IAM Role for the EKS pod (python-processor)
     Value: !GetAtt SqsReaderRole.Arn
+  SqsSenderRoleArn:
+    Description: ARN of the IAM Role for the EKS pod (load-generator)
+    Value: !GetAtt SqsSenderRole.Arn

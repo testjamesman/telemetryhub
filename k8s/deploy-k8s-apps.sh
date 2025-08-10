@@ -20,12 +20,15 @@ echo "--- Gathering Configuration ---"
 
 STACK_NAME="TelemetryHubStack"
 CLUSTER_NAME="telemetry-hub-cluster"
-PROCESSOR_SERVICE_ACCOUNT="python-processor-sa"
-PROCESSOR_ECR_REPO="telemetry-hub-python-processor"
-LOADGEN_ECR_REPO="telemetry-hub-load-generator"
 K8S_NAMESPACE="default"
 
-# ... (CLI checks and Region gathering remain the same) ...
+# Service Account and ECR Repo names
+PROCESSOR_SA="python-processor-sa"
+PROCESSOR_ECR_REPO="telemetry-hub-python-processor"
+LOADGEN_SA="load-generator-sa"
+LOADGEN_ECR_REPO="telemetry-hub-load-generator"
+
+
 if ! command -v aws &> /dev/null || ! command -v eksctl &> /dev/null || ! command -v kubectl &> /dev/null; then
     echo "Error: AWS CLI, eksctl, and kubectl are required."
     exit 1
@@ -38,7 +41,8 @@ if [ -z "$AWS_REGION" ]; then read -p "Enter AWS Region: " AWS_REGION; fi
 echo "--- Retrieving Configuration from AWS ---"
 SQS_QUEUE_URL=$(aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --query "Stacks[0].Outputs[?OutputKey=='SqsQueueUrl'].OutputValue" --output text --region "${AWS_REGION}")
 RDS_ENDPOINT=$(aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --query "Stacks[0].Outputs[?OutputKey=='RdsEndpoint'].OutputValue" --output text --region "${AWS_REGION}")
-SQS_IAM_ROLE_ARN=$(aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --query "Stacks[0].Outputs[?OutputKey=='SqsReaderRoleArn'].OutputValue" --output text --region "${AWS_REGION}")
+SQS_READER_ROLE_ARN=$(aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --query "Stacks[0].Outputs[?OutputKey=='SqsReaderRoleArn'].OutputValue" --output text --region "${AWS_REGION}")
+SQS_SENDER_ROLE_ARN=$(aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --query "Stacks[0].Outputs[?OutputKey=='SqsSenderRoleArn'].OutputValue" --output text --region "${AWS_REGION}")
 
 # Get Processor ECR Image URI
 if [ -z "$PROCESSOR_ECR_IMAGE_URI" ]; then
@@ -72,16 +76,28 @@ kubectl create secret generic rds-credentials --from-literal=password="${DB_PASS
 echo "✅ Kubernetes secret 'rds-credentials' created."
 
 
-# --- Step 3: Associate IAM Role with Kubernetes Service Account ---
-echo "--- Setting up IAM Role for Service Account (IRSA) ---"
+# --- Step 3: Associate IAM Roles with Kubernetes Service Accounts ---
+echo "--- Setting up IAM Roles for Service Accounts (IRSA) ---"
+
+echo "Configuring service account for Python Processor..."
 eksctl create iamserviceaccount \
-    --name "${PROCESSOR_SERVICE_ACCOUNT}" \
+    --name "${PROCESSOR_SA}" \
     --namespace "${K8S_NAMESPACE}" \
     --cluster "${CLUSTER_NAME}" \
-    --attach-role-arn "${SQS_IAM_ROLE_ARN}" \
+    --attach-role-arn "${SQS_READER_ROLE_ARN}" \
     --approve \
     --override-existing-serviceaccounts
-echo "✅ Service account '${PROCESSOR_SERVICE_ACCOUNT}' configured."
+echo "✅ Service account '${PROCESSOR_SA}' configured."
+
+echo "Configuring service account for Load Generator..."
+eksctl create iamserviceaccount \
+    --name "${LOADGEN_SA}" \
+    --namespace "${K8S_NAMESPACE}" \
+    --cluster "${CLUSTER_NAME}" \
+    --attach-role-arn "${SQS_SENDER_ROLE_ARN}" \
+    --approve \
+    --override-existing-serviceaccounts
+echo "✅ Service account '${LOADGEN_SA}' configured."
 
 
 # --- Step 4: Deploy Processor Application to Kubernetes ---

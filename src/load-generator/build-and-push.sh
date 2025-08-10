@@ -73,7 +73,7 @@ echo "✅ ECR repository check complete."
 
 # --- Step 2: Build and Push Docker Image to ECR ---
 echo "--- Building Docker image ---"
-docker build -t "${ECR_REPO_NAME}:${IMAGE_TAG}" .
+docker build --platform linux/amd64 -t "${ECR_REPO_NAME}:${IMAGE_TAG}" .
 
 echo "--- Pushing Docker image to ECR ---"
 aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"

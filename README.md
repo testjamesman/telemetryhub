@@ -49,6 +49,8 @@ telemetry-hub/
 │   ├── cloudformation.yml        # CloudFormation template for VPCs, TGW, EC2, RDS, etc.
 │   ├── deploy-infra.sh           # Shell script to automate the CloudFormation deployment.
 │   └── deploy-eks.sh             # Shell script to automate the EKS cluster creation.
+│   └── setup-database.sh         # Shell script to automate the RDS database configuration.
+│   └── update-iam-trust.sh       # Shell script to forcibly update the IAM trust policy for python-processor.
 │  
 └── src/                        # Source code for the test applications.
     ├── csharp-producer/          # .NET application that runs on the Windows VM.
@@ -145,26 +147,39 @@ Before deploying, ensure you have the following installed and configured on your
 3.  **Session Manager Plugin:** The plugin for the AWS CLI is required for connecting to the EC2 instances.
     * Follow the [Official Installation Guide](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html) for your operating system.
     * **Verification:** The plugin does not have a standalone version command. Its successful installation is verified when the `aws ssm start-session` command in the "Notes" section works without a "plugin not found" error.
-4.  **Code Editor:** A code editor like VS Code is recommended for reviewing the project files.
+4.  **PostgreSQL CLI** The [psql](https://formulae.brew.sh/formula/libpq) command line interface must be installed. 
+5.  **Code Editor:** A code editor like VS Code is recommended for reviewing the project files.
 
 #### Environment Variables
 
 The deployment scripts can be run non-interactively by setting the following environment variables before execution.
 
-**Local Machine (for deployment scripts):**
+**Available Variables:**
 - `AWS_REGION`: The AWS region to deploy resources into (e.g., `us-east-1`).
 - `AWS_ACCOUNT_ID`: Your 12-digit AWS Account ID.
-- `DB_PASSWORD`: The master password for the RDS database.
-- `USE_MY_IP`: Set to `true` to use your current public IP for security group rules.
-- `GO_EXPORTER_URL`: The pre-signed S3 URL for the Go Exporter package.
 - `CSHARP_PRODUCER_URL`: The pre-signed S3 URL for the C# Producer package.
-
-**Remote Hosts (for application configuration):**
 - `DB_HOST`: The RDS endpoint address.
-- `DB_USER`: The username for the RDS database (`dbadmin`).
 - `DB_NAME`: The name of the RDS database (`telemetryhubdb`).
 - `DB_PASSWORD`: The master password for the RDS database.
+- `DB_USER`: The username for the RDS database (`dbadmin`).
+- `GO_EXPORTER_URL`: The pre-signed S3 URL for the Go Exporter package.
 - `SQS_QUEUE_URL`: The URL of the SQS queue.
+- `USE_MY_IP`: Set to `true` to use your current public IP for security group rules.
+
+**Setting the values**
+
+```bash
+export AWS_REGION=""
+export AWS_ACCOUNT_ID=""
+export CSHARP_PRODUCER_URL=""
+export DB_HOST=""
+export DB_NAME=""
+export DB_PASSWORD=""
+export DB_USER=""
+export GO_EXPORTER_URL=""
+export SQS_QUEUE_URL=""
+export USE_MY_IP=""
+```
 
 ### 2. Package and Upload Host Applications
 
@@ -246,6 +261,33 @@ This step creates the EKS cluster and a default node group.
     ```
 5.  **Wait for completion.** The script will create the EKS control plane and the node group. This process can take 20-25 minutes.
 
+### 5. Database and IAM Trust Fixes
+
+This step runs shell scripts to both configure the RDS database and force the IAM Trust Policy settings that `python-processor` will need.
+
+1. **Navigate to the `infrastructure` directory.**
+    ```bash
+    cd infrastructure
+    ```
+2.  **Execute the Database Configuration.**
+    1.  Make the script executable.
+        ```bash
+        chmod +x setup-database.sh
+        ```
+    2.  Run the script.
+        ```bash
+        ./setup-database.sh
+        ```
+3.  **Execute the IAM Trust Policy fix.**
+    1.  Make the script executable.
+        ```bash
+        chmod +x update-iam-trust.sh
+        ```
+    2.  Run the script.
+        ```bash
+        ./update-iam-trust.sh
+        ```
+
 ### 5. Container Image Creation & Upload
 
 This step builds both the `python-processor` and `load-generator` applications and pushes their container images to Amazon ECR.
@@ -302,7 +344,7 @@ This step deploys both the `python-processor` and `load-generator` containers to
 
 ### 7. Verify Host Application Deployment
 
-The Go and C# applications are installed and started automatically by the `UserData` scripts in the CloudFormation template. This section describes how to connect to the instances and verify that the applications are running correctly.
+The Go and C# applications are pre-loaded by the `UserData` scripts in the CloudFormation template. This section describes how to connect to the instances, build the apps, and run them as background processes.
 
 #### Linux VM (Go Exporter)
 
@@ -314,7 +356,38 @@ The Go and C# applications are installed and started automatically by the `UserD
     # Start an SSM session
     aws ssm start-session --target $LINUX_INSTANCE_ID
     ```
-2.  **Verify the application is running.** Check the application logs to see the verbose output.
+2. **Set Environment Variables**
+   ```bash
+   # Be careful to not include trailing spaces from your copy/paste
+   export DB_HOST="<rds-endpoint>"
+   export DB_NAME="telemetryhubdb"
+   export DB_PASSWORD="<your-db-password>"
+   export DB_USER="dbadmin"
+   echo -e "DB_HOST = $DB_HOST\nDB_NAME = $DB_NAME\nDB_PASSWORD = $DB_PASSWORD\nDB_USER = $DB_USER"
+   ```
+   
+3. **Build and Start the App**
+   ```bash
+   # Ensure correct ownership
+   sudo chown -R ssm-user:ssm-user /home/ssm-user/telemetry-hub
+   
+   # Navigate to app directory
+   cd /home/ssm-user/telemetry-hub/src/go-exporter
+   
+   # Install dependencies
+   go mod tidy
+   
+   # Build the executable
+   go build -o exporter .
+   
+   # Start as a background process
+   nohup ./exporter &> nohup.out &
+   
+   # Exit the nohup prompt, the app will remain running
+   # <control+c>
+   ```
+
+4.  **Verify the application is working.** Check the application logs to see the verbose output.
     ```bash
     tail -f /home/ssm-user/telemetry-hub/src/go-exporter/nohup.out
     ```
@@ -329,12 +402,28 @@ The Go and C# applications are installed and started automatically by the `UserD
     # Start an SSM session
     aws ssm start-session --target $WINDOWS_INSTANCE_ID
     ```
-2.  **Verify the application is running.** The application runs as a background job. You can check its status and view its output.
+
+2. **Set Environment Variable**
+   ```powershell
+   # Set the SQS queue variable
+   $Env:SQS_QUEUE_URL = "<sqs-url>"
+   ```
+
+3. **Build and Start the App**
+   ```powershell
+   # Build the app
+   dotnet publish -c Release -o ./publish
+   
+   # Start the app as a background job
+   Start-Job -ScriptBlock { C:\Users\Administrator\telemetry-hub\publish\\DataProducer.exe }
+   ```
+
+4.  **Verify the application is working.** The application runs as a background job. You can check its status and view its output.
     ```powershell
     # Check the status of running jobs
     Get-Job
 
-    # Retrieve output from the job (replace <ID> with the job's ID)
+    # Retrieve output (logs) from the job (replace <ID> with the job's ID)
     Receive-Job -Id <ID>
     ```
 
@@ -402,7 +491,10 @@ After you have successfully deleted all cloud resources, it is good practice to 
 ```bash
 unset AWS_REGION
 unset AWS_ACCOUNT_ID
+unset DB_HOST
+unset DB_NAME
 unset DB_PASSWORD
+unset DB_USER
 unset USE_MY_IP
 ```
 

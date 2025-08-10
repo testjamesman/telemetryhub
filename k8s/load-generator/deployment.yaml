@@ -14,6 +14,8 @@ spec:
       labels:
         app: load-generator
     spec:
+      # Specify the service account to use for this pod
+      serviceAccountName: load-generator-sa
       containers:
       - name: load-generator
         # IMPORTANT: Replace this with the URI of your load-generator image in ECR

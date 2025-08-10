@@ -17,4 +17,4 @@ COPY . .
 EXPOSE 8080
 
 # Run the app when the container launches
-CMD ["python", "load_generator.py"]
+CMD ["python", "load-generator.py"]

@@ -1,4 +1,4 @@
-# src/load-generator/load_generator.py
+# src/load-generator/load-generator.py
 import os
 import time
 import boto3
@@ -44,7 +44,7 @@ class LoadGenerator:
         self.thread.daemon = True
         self.thread.start()
         self.is_running = True
-        logging.info(f"Load generator started with {rpm} RPM, {error_rate}% error rate, {latency_ms}ms latency, and {corruption_rate}% corruption rate.")
+        logging.info(f"✅ Load generator started with {rpm} RPM, {error_rate}% error rate, {latency_ms}ms latency, and {corruption_rate}% corruption rate.")
 
     def stop(self):
         if not self.is_running:
@@ -54,7 +54,7 @@ class LoadGenerator:
         self.stop_event.set()
         self.thread.join()
         self.is_running = False
-        logging.info("Load generator stopped.")
+        logging.info("✅ Load generator stopped.")
 
     def run(self):
         while not self.stop_event.is_set():
@@ -83,13 +83,14 @@ class LoadGenerator:
                 else:
                     message_id = str(uuid.uuid4())
                     message_content = f"LoadGen message at {time.time()}"
+                    logging.info(f"Sending message {message_id} to SQS.")
                     sqs.send_message(
                         QueueUrl=SQS_QUEUE_URL,
                         MessageBody=message_content,
                         MessageGroupId="telemetry-hub-loadgen",
                         MessageDeduplicationId=message_id
                     )
-                    logging.info(f"-> Sent message {message_id} to SQS.")
+                    logging.info(f"-> Successfully sent message {message_id}.")
 
             except Exception as e:
                 logging.error(f"Failed to send message to SQS: {e}")
@@ -141,7 +142,7 @@ def invoke_once():
             MessageGroupId="telemetry-hub-single",
             MessageDeduplicationId=message_id
         )
-        logging.info(f"-> Successfully sent single message {message_id} to SQS.")
+        logging.info(f"-> Successfully sent single message {message_id}.")
         return jsonify({"status": "success", "message_id": message_id})
     except Exception as e:
         logging.error(f"Failed to send single message: {e}")

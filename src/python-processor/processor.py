@@ -25,7 +25,7 @@ SQS_QUEUE_URL = os.environ.get("SQS_QUEUE_URL")
 DB_HOST = os.environ.get("DB_HOST")
 DB_NAME = os.environ.get("DB_NAME", "telemetryhubdb")
 DB_USER = os.environ.get("DB_USER", "dbadmin")
-DB_PASS = os.environ.get("DB_PASSWORD") # CORRECTED: Was DB_PASS
+DB_PASS = os.environ.get("DB_PASSWORD")
 # -----------------------
 
 sqs = boto3.client("sqs", region_name=os.environ.get("AWS_REGION", "us-east-1"))
@@ -47,65 +47,6 @@ def get_db_connection(db_name_override=None):
     except Exception as e:
         logging.error(f"Failed to connect to the database '{db_to_connect}': {e}")
         return None
-
-def ensure_database_exists():
-    """Connects to the default 'postgres' database to ensure the target database exists."""
-    conn = None
-    try:
-        conn = get_db_connection(db_name_override='postgres')
-        if conn is None:
-            logging.error("Cannot ensure database exists, failed to connect to 'postgres' db.")
-            return
-
-        conn.autocommit = True
-        cur = conn.cursor()
-        
-        logging.info(f"Checking if database '{DB_NAME}' exists...")
-        cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (DB_NAME,))
-        
-        if not cur.fetchone():
-            logging.warning(f"Database '{DB_NAME}' not found. Creating it now...")
-            cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(DB_NAME)))
-            logging.info(f"✅ Database '{DB_NAME}' created successfully.")
-        else:
-            logging.info(f"✅ Database '{DB_NAME}' already exists.")
-            
-        cur.close()
-    except Exception as e:
-        logging.error(f"An error occurred while trying to ensure database exists: {e}", exc_info=True)
-    finally:
-        if conn:
-            conn.close()
-
-
-def create_db_table():
-    """Creates the processed_messages table if it doesn't exist."""
-    conn = None
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            logging.error("Cannot create table, no database connection to '{DB_NAME}'.")
-            return False
-            
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS processed_messages (
-                id SERIAL PRIMARY KEY,
-                message_id VARCHAR(255) NOT NULL,
-                content VARCHAR(255),
-                processed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-            );
-        """)
-        conn.commit()
-        cur.close()
-        logging.info(f"✅ Table 'processed_messages' in '{DB_NAME}' is ready.")
-        return True
-    except Exception as e:
-        logging.error(f"Error creating database table: {e}", exc_info=True)
-        return False
-    finally:
-        if conn:
-            conn.close()
 
 def process_messages():
     """
@@ -172,12 +113,7 @@ if __name__ == "__main__":
     # --- Initial Setup ---
     # This startup sequence is now robust against race conditions with RDS.
     logging.info("--- Python Processor Starting Up ---")
-    logging.info("Step 1: Ensuring database exists...")
-    ensure_database_exists()
     
-    logging.info("Step 2: Ensuring table exists...")
-    create_db_table()
-
     # --- Start Application Threads ---
     logging.info("Starting background message processing thread...")
     processing_thread = Thread(target=main_loop)

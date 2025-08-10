@@ -85,6 +85,14 @@ echo "✅ Package uploaded to s3://${S3_BUCKET}/${PACKAGE_NAME}"
 echo "--- Generating pre-signed URL ---"
 PRESIGNED_URL=$(aws s3 presign "s3://${S3_BUCKET}/${PACKAGE_NAME}" --expires-in 3600 --region "${AWS_REGION}")
 echo "✅ Pre-signed URL generated successfully."
+
+
+# --- Step 5: Cleanup ---
+echo "--- Cleaning up local artifact ---"
+rm "${PACKAGE_NAME}"
+echo "✅ Local zip file removed."
+
+
 echo "-----------------------------------------------------"
 echo "You will need this URL for the CloudFormation deployment:"
 echo "${PRESIGNED_URL}"
