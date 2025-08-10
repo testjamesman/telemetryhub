@@ -75,9 +75,7 @@ class LoadGenerator:
                     logging.warning(f"Sending corrupted message {message_id} to SQS.")
                     sqs.send_message(
                         QueueUrl=SQS_QUEUE_URL,
-                        MessageBody=message_content,
-                        MessageGroupId="telemetry-hub-loadgen-corrupted",
-                        MessageDeduplicationId=message_id
+                        MessageBody=message_content
                     )
                 
                 else:
@@ -86,9 +84,7 @@ class LoadGenerator:
                     logging.info(f"Sending message {message_id} to SQS.")
                     sqs.send_message(
                         QueueUrl=SQS_QUEUE_URL,
-                        MessageBody=message_content,
-                        MessageGroupId="telemetry-hub-loadgen",
-                        MessageDeduplicationId=message_id
+                        MessageBody=message_content
                     )
                     logging.info(f"-> Successfully sent message {message_id}.")
 
@@ -138,9 +134,7 @@ def invoke_once():
         logging.info(f"Sending single-invoke message {message_id} to SQS.")
         sqs.send_message(
             QueueUrl=SQS_QUEUE_URL,
-            MessageBody=message_content,
-            MessageGroupId="telemetry-hub-single",
-            MessageDeduplicationId=message_id
+            MessageBody=message_content
         )
         logging.info(f"-> Successfully sent single message {message_id}.")
         return jsonify({"status": "success", "message_id": message_id})

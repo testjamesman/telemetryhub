@@ -25,6 +25,7 @@ spec:
       - name: processor
         # IMPORTANT: Replace this with the URI of your container image in ECR
         image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/your-repo-name:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8000
         env:

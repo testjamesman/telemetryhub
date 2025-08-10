@@ -20,6 +20,7 @@ spec:
       - name: load-generator
         # IMPORTANT: Replace this with the URI of your load-generator image in ECR
         image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/your-load-gen-repo:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8080
         env:
