@@ -23,20 +23,21 @@ export PGPASSWORD=$DB_PASSWORD
 # --- Database Creation ---
 echo "--- Ensuring database '$DB_NAME' exists ---"
 # Check if the database exists. If the command returns '1', it exists.
-DB_EXISTS=$(psql --host="$DB_HOST" --username="$DB_USER" -dbname=postgres -t -c "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME';" | xargs)
+#     psql -h <hostname> -p <port_number> -d <database_name> -U <username>
+DB_EXISTS=$(psql -h "$DB_HOST" -U "$DB_USER" -d postgres -t -c "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME';" | xargs)
 
 if [ "$DB_EXISTS" == "1" ]; then
     echo "✅ Database '$DB_NAME' already exists."
 else
     echo "Database not found. Creating..."
-    psql --host"$DB_HOST" --username="$DB_USER" -dbname=postgres -c "CREATE DATABASE $DB_NAME;"
+    psql -h "$DB_HOST" -U "$DB_USER" -d postgres -c "CREATE DATABASE $DB_NAME;"
     echo "✅ Database '$DB_NAME' created."
 fi
 
 # --- Table Creation ---
 echo "--- Ensuring table 'processed_messages' exists in '$DB_NAME' ---"
 TABLE_SQL="CREATE TABLE IF NOT EXISTS processed_messages (id SERIAL PRIMARY KEY, message_id VARCHAR(255) NOT NULL, content VARCHAR(255), processed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());"
-psql  --host="$DB_HOST" --username="$DB_USER" --dbname="$DB_NAME" -c "$TABLE_SQL"
+psql  -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c "$TABLE_SQL"
 
 echo "✅ Table 'processed_messages' is ready."
 echo "--- Database setup complete. ---"

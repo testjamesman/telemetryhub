@@ -411,11 +411,14 @@ The Go and C# applications are pre-loaded by the `UserData` scripts in the Cloud
 
 3. **Build and Start the App**
    ```powershell
+   # Navigate to the app directory
+   cd C:\Users\Administrator\telemetry-hub
+   
    # Build the app
    dotnet publish -c Release -o ./publish
    
    # Start the app as a background job
-   Start-Job -ScriptBlock { C:\Users\Administrator\telemetry-hub\publish\\DataProducer.exe }
+   Start-Job -ScriptBlock { C:\Users\Administrator\telemetry-hub\publish\DataProducer.exe }
    ```
 
 4.  **Verify the application is working.** The application runs as a background job. You can check its status and view its output.
