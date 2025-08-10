@@ -8,9 +8,7 @@
   - [Network Topology](#network-topology)
 - [Deployment Steps](#deployment-steps)
 - [Local Development](#local-development)
-- [Notes](#notes)
-  - [Connecting via Session Manager (RDP Port Forwarding)](#connecting-via-session-manager-rdp-port-forwarding)
-  - [Environment Cleanup](#environment-cleanup)
+- [Environment Cleanup](#environment-cleanup)
 - [Troubleshooting](#troubleshooting)
 
 ---
@@ -30,50 +28,53 @@ This environment allows you to test a vendor's ability to:
 
 ```
 telemetry-hub/
-├── .gitignore                # Specifies intentionally untracked files to ignore.
-├── README.md                 # This file.
+├── .gitignore                  # Specifies intentionally untracked files to ignore.
+├── README.md                   # This file.
+│  
+├── dev/                        # Resources for local, accelerated development.
+│   ├── README.md                 # Instructions for the local dev environment.
+│   ├── docker-compose.yml        # Runs a local PostgreSQL database for testing.
+│   └── cloudformation-dev.yml    # A minimal CloudFormation stack for a dev RDS instance.
 │
-├── dev/                      # Resources for local, accelerated development.
-│   ├── README.md               # Instructions for the local dev environment.
-│   ├── docker-compose.yml      # Runs a local PostgreSQL database for testing.
-│   └── cloudformation-dev.yml  # A minimal CloudFormation stack for a dev RDS instance.
-│
-├── infrastructure/           # Infrastructure as Code (IaC) for AWS resources.
-│   ├── cloudformation.yml      # CloudFormation template for VPCs, TGW, EC2, RDS, etc.
-│   ├── deploy-infra.sh         # Shell script to automate the CloudFormation deployment.
-│   └── deploy-eks.sh           # Shell script to automate the EKS cluster creation.
-│
-├── src/                      # Source code for the test applications.
-│   ├── csharp-producer/        # .NET application that runs on the Windows VM.
-│   │   ├── DataProducer.csproj   # C# project file defining dependencies (e.g., AWS SDK).
-│   │   └── Program.cs            # Main application logic for sending messages to SQS.
-│   │
-│   ├── go-exporter/            # Go application that runs on the Linux VM.
-│   │   ├── exporter.go           # Main application logic for querying RDS and exposing metrics.
-│   │   └── go.mod                # Go module file for managing project dependencies.
-│   │
-│   ├── python-processor/       # Python backend service that runs in Kubernetes.
-│   │   ├── build-and-push.sh     # Script to build and push the container image to ECR.
-│   │   ├── Dockerfile            # Instructions to build the Python app into a container image.
-│   │   ├── requirements.txt      # Lists Python package dependencies.
-│   │   └── processor.py          # Main application logic for processing SQS messages.
-│   │
-│   └── load-generator/         # Python web UI that runs in Kubernetes.
-│       ├── build-and-push.sh     # Script to build and push the container image to ECR.
-│       ├── Dockerfile            # Instructions to build the Python app into a container image.
-│       ├── requirements.txt      # Lists Python package dependencies.
-│       ├── load_generator.py     # Main application logic for the web UI and load generation.
-│       └── templates/            # Directory to hold web UI files.
-│           └── index.html          # HTML template for the web UI.
-│
-└── k8s/                      # Kubernetes manifests for all applications.
-    ├── python-processor/       # Manifests for the backend SQS processing service.
-    │   ├── deployment.yaml       # Defines the desired state for the processor Pods.
-    │   └── service.yaml          # Exposes the processor Pods as a network service within the cluster.
-    ├── load-generator/         # Manifests for the web UI and load generation service.
-    │   ├── deployment.yaml       # Defines the desired state for the load generator Pods.
-    │   └── service.yaml          # Exposes the load generator to the internet via a LoadBalancer.
-    └── deploy-k8s-apps.sh      # Script to deploy both apps to EKS.
+├── k8s/                        # Kubernetes manifests for all applications.
+│   ├── python-processor/         # Manifests for the backend SQS processing service.
+│   │   ├── deployment.yaml         # Defines the desired state for the processor Pods.
+│   │   └── service.yaml            # Exposes the processor Pods as a network service within the cluster.
+│   ├── load-generator/           # Manifests for the web UI and load generation service.
+│   │   ├── deployment.yaml         # Defines the desired state for the load generator Pods.
+│   │   └── service.yaml            # Exposes the load generator to the internet via a LoadBalancer.
+│   └── deploy-k8s-apps.sh        # Script to deploy both apps to EKS.
+│  
+├── infrastructure/             # Infrastructure as Code (IaC) for AWS resources.
+│   ├── cloudformation.yml        # CloudFormation template for VPCs, TGW, EC2, RDS, etc.
+│   ├── deploy-infra.sh           # Shell script to automate the CloudFormation deployment.
+│   └── deploy-eks.sh             # Shell script to automate the EKS cluster creation.
+│  
+└── src/                        # Source code for the test applications.
+    ├── csharp-producer/          # .NET application that runs on the Windows VM.
+    │   ├── package-and-upload.sh   # Packages and uploads the app to S3.
+    │   ├── DataProducer.csproj     # C# project file defining dependencies (e.g., AWS SDK).
+    │   └── Program.cs              # Main application logic for sending messages to SQS.
+    │
+    ├── go-exporter/              # Go application that runs on the Linux VM.
+    │   ├── package-and-upload.sh   # Packages and uploads the app to S3.
+    │   ├── exporter.go             # Main application logic for querying RDS and exposing metrics.
+    │   └── go.mod                  # Go module file for managing project dependencies.
+    │   └── go.sum                  # Go file for ensuring integrity of project dependencies.
+    │
+    ├── python-processor/         # Python backend service that runs in Kubernetes.
+    │   ├── build-and-push.sh       # Script to build and push the container image to ECR.
+    │   ├── Dockerfile              # Instructions to build the Python app into a container image.
+    │   ├── requirements.txt        # Lists Python package dependencies.
+    │   └── processor.py            # Main application logic for processing SQS messages.
+    │  
+    └── load-generator/           # Python web UI that runs in Kubernetes.
+        ├── build-and-push.sh       # Script to build and push the container image to ECR.
+        ├── Dockerfile              # Instructions to build the Python app into a container image.
+        ├── requirements.txt        # Lists Python package dependencies.
+        ├── load_generator.py       # Main application logic for the web UI and load generation.
+        └── templates/              # Directory to hold web UI files.
+            └── index.html            # HTML template for the web UI.
 ```
 
 ---
@@ -155,6 +156,8 @@ The deployment scripts can be run non-interactively by setting the following env
 - `AWS_ACCOUNT_ID`: Your 12-digit AWS Account ID.
 - `DB_PASSWORD`: The master password for the RDS database.
 - `USE_MY_IP`: Set to `true` to use your current public IP for security group rules.
+- `GO_EXPORTER_URL`: The pre-signed S3 URL for the Go Exporter package.
+- `CSHARP_PRODUCER_URL`: The pre-signed S3 URL for the C# Producer package.
 
 **Remote Hosts (for application configuration):**
 - `DB_HOST`: The RDS endpoint address.
@@ -163,25 +166,61 @@ The deployment scripts can be run non-interactively by setting the following env
 - `DB_PASSWORD`: The master password for the RDS database.
 - `SQS_QUEUE_URL`: The URL of the SQS queue.
 
-### 2. Infrastructure Deployment
+### 2. Package and Upload Host Applications
+
+The Go and C# applications are installed on the EC2 instances at boot time using pre-signed S3 URLs. You must run the packaging scripts first to generate these URLs.
+
+1.  **Package the Go Exporter:**
+    * Navigate to the `go-exporter` source directory.
+        ```bash
+        cd src/go-exporter
+        ```
+    * Make the script executable and run it.
+        ```bash
+        chmod +x package-and-upload.sh
+        ./package-and-upload.sh
+        ```
+    * **Copy the pre-signed URL** that is printed at the end. You will need it for the next step.
+
+2.  **Package the C# Producer:**
+    * Navigate to the `csharp-producer` source directory.
+        ```bash
+        cd ../csharp-producer
+        ```
+    * Make the script executable and run it.
+        ```bash
+        chmod +x package-and-upload.sh
+        ./package-and-upload.sh
+        ```
+    * **Copy the pre-signed URL** that is printed at the end. You will need it for the next step.
+
+### 3. Infrastructure Deployment
 
 This step uses the `deploy-infra.sh` script to deploy the CloudFormation stack. The script will prompt you for any required information that is not already set via environment variables.
 
 1.  **Navigate to the `infrastructure` directory** in your terminal.
     ```bash
-    cd infrastructure
+    cd ../../infrastructure
     ```
 2.  **Make the script executable.**
     ```bash
     chmod +x deploy-infra.sh
     ```
 3.  **Run the deployment script.**
+    You can either run the script and provide the pre-signed URLs when prompted, or you can set them as environment variables beforehand for a non-interactive deployment.
     ```bash
+    # Option 1: Interactive (will be prompted for URLs)
+    ./deploy-infra.sh
+
+    # Option 2: Non-interactive (set vars first)
+    export GO_EXPORTER_URL="<your-go-exporter-url>"
+    export CSHARP_PRODUCER_URL="<your-csharp-producer-url>"
     ./deploy-infra.sh
     ```
+
 4.  **Wait for completion.** The script will initiate the stack deployment, which takes 10-15 minutes, and will wait for it to complete before printing the outputs.
 
-### 3. EKS Cluster Setup
+### 4. EKS Cluster Setup
 
 This step creates the EKS cluster and a default node group.
 
@@ -207,7 +246,7 @@ This step creates the EKS cluster and a default node group.
     ```
 5.  **Wait for completion.** The script will create the EKS control plane and the node group. This process can take 20-25 minutes.
 
-### 4. Container Image Creation & Upload
+### 5. Container Image Creation & Upload
 
 This step builds both the `python-processor` and `load-generator` applications and pushes their container images to Amazon ECR.
 
@@ -218,7 +257,7 @@ This step builds both the `python-processor` and `load-generator` applications a
 2.  **Build and Push the `python-processor`:**
     1.  Navigate to the `python-processor` source directory.
         ```bash
-        cd src/python-processor
+        cd ../src/python-processor
         ```
     2.  Make the script executable.
         ```bash
@@ -243,13 +282,13 @@ This step builds both the `python-processor` and `load-generator` applications a
         ./build-and-push.sh
         ```
 
-### 5. Kubernetes Application Deployment
+### 6. Kubernetes Application Deployment
 
 This step deploys both the `python-processor` and `load-generator` containers to the EKS cluster.
 
 1.  **Navigate to the `k8s` directory.**
     ```bash
-    cd k8s
+    cd ../../k8s
     ```
 2.  **Make the script executable.**
     ```bash
@@ -261,9 +300,9 @@ This step deploys both the `python-processor` and `load-generator` containers to
     ```
 4.  **Get the Web UI URL.** The script will wait for all pods to be ready and for the AWS Load Balancer to be provisioned. It will then print the public URL for the Load Generator web UI.
 
-### 6. Host Application Deployment
+### 7. Verify Host Application Deployment
 
-This section covers deploying the applications to the standalone EC2 instances.
+The Go and C# applications are installed and started automatically by the `UserData` scripts in the CloudFormation template. This section describes how to connect to the instances and verify that the applications are running correctly.
 
 #### Linux VM (Go Exporter)
 
@@ -275,26 +314,10 @@ This section covers deploying the applications to the standalone EC2 instances.
     # Start an SSM session
     aws ssm start-session --target $LINUX_INSTANCE_ID
     ```
-2.  **Clone the repository.** (Note: Go and Git were pre-installed by the CloudFormation template).
+2.  **Verify the application is running.** Check the application logs to see the verbose output.
     ```bash
-    cd ~
-    git clone https://your-repo-url/telemetry-hub.git
-    cd telemetry-hub/src/go-exporter/
+    tail -f /home/ssm-user/telemetry-hub/src/go-exporter/nohup.out
     ```
-3.  **Set Environment Variables.** Retrieve the RDS endpoint from the CloudFormation outputs and use the password you provided during the infrastructure deployment.
-    ```bash
-    export DB_HOST=$(aws cloudformation describe-stacks --stack-name TelemetryHubStack --query "Stacks[0].Outputs[?OutputKey=='RdsEndpoint'].OutputValue" --output text --region YOUR_AWS_REGION)
-    export DB_USER="dbadmin"
-    export DB_NAME="telemetryhubdb"
-    export DB_PASSWORD="YOUR_DB_PASSWORD"
-    ```
-4.  **Build and run the application in the background.**
-    ```bash
-    go mod tidy
-    go build -o exporter .
-    nohup ./exporter &
-    ```
-    The `nohup ./exporter &` command starts the application as a background process that will continue running even after you exit the session. You can check its output by running `cat nohup.out`.
 
 #### Windows VM (C# Producer)
 
@@ -306,31 +329,16 @@ This section covers deploying the applications to the standalone EC2 instances.
     # Start an SSM session
     aws ssm start-session --target $WINDOWS_INSTANCE_ID
     ```
-2.  **Clone the repository.** In the PowerShell session, run:
+2.  **Verify the application is running.** The application runs as a background job. You can check its status and view its output.
     ```powershell
-    cd C:\Users\Administrator
-    git clone https://your-repo-url/telemetry-hub.git
-    cd telemetry-hub/src/csharp-producer/
-    ```
-3.  **Set Environment Variables.** Retrieve the SQS Queue URL from the CloudFormation outputs.
-    ```powershell
-    # Get the SQS URL from CloudFormation
-    $SqsUrl = (aws cloudformation describe-stacks --stack-name TelemetryHubStack --query "Stacks[0].Outputs[?OutputKey=='SqsQueueUrl'].OutputValue" --output text)
+    # Check the status of running jobs
+    Get-Job
 
-    # Set it as an environment variable for the current session
-    $env:SQS_QUEUE_URL = $SqsUrl
+    # Retrieve output from the job (replace <ID> with the job's ID)
+    Receive-Job -Id <ID>
     ```
-4.  **Build and run the application in the background.**
-    ```powershell
-    # Build the project into a self-contained executable
-    dotnet publish -c Release -o ./publish
 
-    # Start the application as a background job
-    Start-Job -ScriptBlock { C:\Users\Administrator\telemetry-hub\src\csharp-producer\publish\DataProducer.exe }
-    ```
-    The `Start-Job` command runs the application in the background. You can check the status of running jobs with `Get-Job` and see their output with `Receive-Job -Id <JOB_ID>`.
-
-### 7. Using the Web UI
+### 8. Using the Web UI
 
 After all deployment steps are complete, you can interact with the system using the Load Generator web UI.
 
@@ -368,29 +376,7 @@ For detailed instructions, please see the [**`dev/README.md`**](./dev/README.md)
 
 ---
 
-## Notes
-
-### Connecting via Session Manager (RDP Port Forwarding)
-
-For a graphical interface to the Windows VM, you can use Session Manager to forward the RDP port to your local machine.
-
-1.  **Start the port forwarding session:**
-    ```bash
-    # Get the Instance ID
-    WINDOWS_INSTANCE_ID=$(aws cloudformation describe-stacks --stack-name TelemetryHubStack --query "Stacks[0].Outputs[?OutputKey=='WindowsInstanceId'].OutputValue" --output text)
-
-    # Start the session
-    aws ssm start-session \
-        --target $WINDOWS_INSTANCE_ID \
-        --document-name AWS-StartPortForwardingSession \
-        --parameters '{"portNumber":["3389"], "localPortNumber":["9999"]}'
-    ```
-2.  **Connect with an RDP client:**
-    * Open your preferred RDP client (e.g., Microsoft Remote Desktop).
-    * Connect to `localhost:9999`.
-    * You will need to retrieve the administrator password from the EC2 console to log in.
-
-### Environment Cleanup
+## Environment Cleanup
 
 To delete all the AWS resources created by this project, you must remove the EKS cluster resources *before* deleting the underlying networking stack with CloudFormation.
 
@@ -411,7 +397,7 @@ To delete all the AWS resources created by this project, you must remove the EKS
     aws cloudformation list-stacks --query "StackSummaries[?StackName=='TelemetryHubStack'].[StackName,StackStatus]" --output text
     ```
 
-#### Unset Environment Variables
+### Unset Environment Variables
 After you have successfully deleted all cloud resources, it is good practice to unset the environment variables you may have exported on your local machine to avoid potential conflicts with other projects.
 ```bash
 unset AWS_REGION
@@ -452,7 +438,7 @@ This section covers common issues you might encounter during deployment.
 - **Solution:**
     1.  **Check Service Status:** Run `kubectl get service load-generator-service`. Ensure it has an "EXTERNAL-IP" or "HOSTNAME" assigned. This can take a few minutes after deployment.
     2.  **Check Pod Logs:** Run `kubectl logs -l app=load-generator`. Look for any startup errors in the Flask application.
-    3.  **Check Security Groups:** Ensure the security group for your EKS nodes allows inbound traffic on port 80 from your IP address. `eksctl` usually configures this correctly, but it's worth checking.
+    3.  **Check Security Groups:** Ensure the security group for your EKS nodes allows inbound traffic on port 80 from your IP address. `eksctl` usually-configures this correctly, but it's worth checking.
 
 ### Go or C# App Fails to Start
 

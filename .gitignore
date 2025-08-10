@@ -116,3 +116,6 @@ packaged.yaml
 *.tfstate
 *.tfstate.*.backup
 crash.log
+
+# K8s
+infrastructure/.kuberlr

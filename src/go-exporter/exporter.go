@@ -21,7 +21,7 @@ var (
 	// These environment variables will be set on the EC2 instance or locally.
 	dbHost = os.Getenv("DB_HOST")
 	dbUser = os.Getenv("DB_USER")
-	dbPass = os.Getenv("DB_PASS")
+	dbPass = os.Getenv("DB_PASSWORD")
 	dbName = os.Getenv("DB_NAME")
 	// ---------------------
 
@@ -49,9 +49,9 @@ func main() {
 	log.Printf("DB_USER: %s", dbUser)
 	log.Printf("DB_NAME: %s", dbName)
 	if dbPass == "" {
-		log.Println("DB_PASS: [Not Set]")
+		log.Println("DB_PASSWORD: [Not Set]")
 	} else {
-		log.Println("DB_PASS: [Set]")
+		log.Println("DB_PASSWORD: [Set]")
 	}
 	log.Println("---------------------------------")
 

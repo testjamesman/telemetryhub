@@ -26,9 +26,10 @@ Parameters:
 
   DbMasterPassword:
     Type: String
-    Description: Master password for the RDS database. Will be visible in the console.
+    Description: Master password for the RDS database.
     Default: ChangeMe123
     MinLength: 8
+    NoEcho: true
   
   GoExporterPackageUrl:
     Type: String
@@ -367,19 +368,30 @@ Resources:
       UserData:
         Fn::Base64: !Sub |
           <powershell>
+          # Set App Directory
+          $appDir = "C:\Users\Administrator\telemetry-hub"
+          New-Item -ItemType Directory -Path $appDir
+          cd $appDir
+
           # Download and install .NET 6 SDK silently
           $ProgressPreference = 'SilentlyContinue'
           Invoke-WebRequest -Uri https://dot.net/v1/dotnet-install.ps1 -OutFile .\\dotnet-install.ps1
           .\\dotnet-install.ps1 -Channel 6.0 -InstallDir 'C:\Program Files\dotnet'
+          
           # Add dotnet to the system PATH
           $newPath = ('C:\Program Files\dotnet', [Environment]::GetEnvironmentVariable('PATH', 'Machine')) -join ';'
           [Environment]::SetEnvironmentVariable('PATH', $newPath, 'Machine')
           
           # Download and extract the application
-          $appDir = "C:\Users\Administrator\telemetry-hub"
-          New-Item -ItemType Directory -Path $appDir
           Invoke-WebRequest -Uri "${CSharpProducerPackageUrl}" -OutFile "$appDir\csharp-producer.zip"
           Expand-Archive -Path "$appDir\csharp-producer.zip" -DestinationPath $appDir
+
+          # Set Environment Variable for the application
+          [System.Environment]::SetEnvironmentVariable('SQS_QUEUE_URL', '${SqsQueue}', 'Machine')
+
+          # Build and run the application in the background
+          dotnet publish -c Release -o ./publish
+          Start-Job -ScriptBlock { C:\Users\Administrator\telemetry-hub\publish\DataProducer.exe }
           </powershell>
     DependsOn: [WindowsSG, SSMInstanceProfile, RdsInstance]
 
@@ -398,14 +410,28 @@ Resources:
           yum update -y
           yum install -y golang
           
+          # Create app directory
+          APP_DIR="/home/ssm-user/telemetry-hub/src/go-exporter"
+          mkdir -p $APP_DIR
+          cd $APP_DIR
+
           # Download and extract the application
-          cd /home/ssm-user
           curl -L "${GoExporterPackageUrl}" -o go-exporter.tar.gz
-          mkdir -p telemetry-hub/src/go-exporter
-          tar -xzvf go-exporter.tar.gz -C telemetry-hub/src/go-exporter
-          chown -R ssm-user:ssm-user telemetry-hub
+          tar -xzvf go-exporter.tar.gz
           
-          # Set environment variables and run the app as a service in a future step
+          # Set environment variables for the application
+          export DB_HOST=${RdsInstance.Endpoint.Address}
+          export DB_USER=${DbMasterUsername}
+          export DB_NAME=telemetryhubdb
+          export DB_PASSWORD=${DbMasterPassword}
+          
+          # Build and run the application in the background
+          go mod tidy
+          go build -o exporter .
+          nohup ./exporter &> nohup.out &
+
+          # Ensure correct ownership
+          chown -R ssm-user:ssm-user /home/ssm-user/telemetry-hub
           
     DependsOn: [LinuxSG, SSMInstanceProfile, RdsInstance]
 

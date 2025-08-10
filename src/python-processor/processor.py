@@ -25,26 +25,57 @@ SQS_QUEUE_URL = os.environ.get("SQS_QUEUE_URL")
 DB_HOST = os.environ.get("DB_HOST")
 DB_NAME = os.environ.get("DB_NAME", "telemetryhubdb")
 DB_USER = os.environ.get("DB_USER", "dbadmin")
-DB_PASS = os.environ.get("DB_PASS")
+DB_PASS = os.environ.get("DB_PASSWORD") # CORRECTED: Was DB_PASS
 # -----------------------
 
 sqs = boto3.client("sqs", region_name=os.environ.get("AWS_REGION", "us-east-1"))
 
-def get_db_connection():
+def get_db_connection(db_name_override=None):
     """Establishes a new connection to the PostgreSQL database using SSL."""
     if not DB_PASS:
-        logging.error("FATAL: DB_PASS environment variable is not set.")
+        logging.error("FATAL: DB_PASSWORD environment variable is not set.")
         return None
+    
+    db_to_connect = db_name_override if db_name_override else DB_NAME
     
     conn = None
     try:
         # Use sslmode='require' for secure connections to RDS
-        conn_string = f"host={DB_HOST} dbname={DB_NAME} user={DB_USER} password={DB_PASS} sslmode='require'"
+        conn_string = f"host={DB_HOST} dbname={db_to_connect} user={DB_USER} password={DB_PASS} sslmode='require'"
         conn = psycopg2.connect(conn_string)
         return conn
     except Exception as e:
-        logging.error(f"Failed to connect to the database: {e}")
+        logging.error(f"Failed to connect to the database '{db_to_connect}': {e}")
         return None
+
+def ensure_database_exists():
+    """Connects to the default 'postgres' database to ensure the target database exists."""
+    conn = None
+    try:
+        conn = get_db_connection(db_name_override='postgres')
+        if conn is None:
+            logging.error("Cannot ensure database exists, failed to connect to 'postgres' db.")
+            return
+
+        conn.autocommit = True
+        cur = conn.cursor()
+        
+        logging.info(f"Checking if database '{DB_NAME}' exists...")
+        cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (DB_NAME,))
+        
+        if not cur.fetchone():
+            logging.warning(f"Database '{DB_NAME}' not found. Creating it now...")
+            cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(DB_NAME)))
+            logging.info(f"✅ Database '{DB_NAME}' created successfully.")
+        else:
+            logging.info(f"✅ Database '{DB_NAME}' already exists.")
+            
+        cur.close()
+    except Exception as e:
+        logging.error(f"An error occurred while trying to ensure database exists: {e}", exc_info=True)
+    finally:
+        if conn:
+            conn.close()
 
 
 def create_db_table():
@@ -53,7 +84,7 @@ def create_db_table():
     try:
         conn = get_db_connection()
         if conn is None:
-            logging.error("Cannot create table, no database connection.")
+            logging.error("Cannot create table, no database connection to '{DB_NAME}'.")
             return False
             
         cur = conn.cursor()
@@ -67,7 +98,7 @@ def create_db_table():
         """)
         conn.commit()
         cur.close()
-        logging.info(f"Database table 'processed_messages' in '{DB_NAME}' is ready.")
+        logging.info(f"✅ Table 'processed_messages' in '{DB_NAME}' is ready.")
         return True
     except Exception as e:
         logging.error(f"Error creating database table: {e}", exc_info=True)
@@ -100,6 +131,8 @@ def process_messages():
             conn = get_db_connection()
             if conn is None:
                 logging.error("Cannot process messages, no database connection.")
+                # Wait before retrying
+                time.sleep(10)
                 return
 
             for msg in messages:
@@ -137,8 +170,12 @@ def main_loop():
 
 if __name__ == "__main__":
     # --- Initial Setup ---
-    # Attempt to create the database table on startup.
-    logging.info("Performing initial database setup...")
+    # This startup sequence is now robust against race conditions with RDS.
+    logging.info("--- Python Processor Starting Up ---")
+    logging.info("Step 1: Ensuring database exists...")
+    ensure_database_exists()
+    
+    logging.info("Step 2: Ensuring table exists...")
     create_db_table()
 
     # --- Start Application Threads ---

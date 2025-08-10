@@ -7,9 +7,10 @@
 # variables before running the script:
 #
 #   export AWS_REGION="us-east-1"
-#   export AWS_ACCOUNT_ID="123456789012"
 #   export DB_PASSWORD="your-secure-password"
 #   export USE_MY_IP="true" # Set to "true" to use your current IP, otherwise it defaults to 0.0.0.0/0
+#   export GO_EXPORTER_URL="your-go-exporter-presigned-s3-url"
+#   export CSHARP_PRODUCER_URL="your-csharp-producer-presigned-s3-url"
 #
 #   Example:
 #   DB_PASSWORD="your-secure-password" USE_MY_IP="true" ./deploy-infra.sh
@@ -45,20 +46,6 @@ if [ -z "$AWS_REGION" ]; then
     fi
 fi
 echo "Using AWS Region: ${AWS_REGION}"
-
-# Check for AWS Account ID
-if [ -z "$AWS_ACCOUNT_ID" ]; then
-    AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
-fi
-if [ -z "$AWS_ACCOUNT_ID" ]; then
-    echo "Could not determine AWS Account ID."
-    read -p "Please enter your AWS Account ID: " AWS_ACCOUNT_ID
-    if [ -z "$AWS_ACCOUNT_ID" ]; then
-        echo "Error: AWS Account ID is required."
-        exit 1
-    fi
-fi
-echo "Using AWS Account ID: ${AWS_ACCOUNT_ID}"
 
 # --- Step 1: Check for User-Provided Parameters ---
 echo "--- Checking for User-Provided Parameters ---"
@@ -99,7 +86,29 @@ if [ -z "$DB_PASSWORD" ]; then
     exit 1
   fi
 fi
-echo "Database password is set."
+echo "✅ Database password is set."
+
+# Get the Go Exporter URL
+if [ -z "$GO_EXPORTER_URL" ]; then
+  echo "GO_EXPORTER_URL environment variable not set."
+  read -p "Please enter the pre-signed S3 URL for the Go Exporter package: " GO_EXPORTER_URL
+  if [ -z "$GO_EXPORTER_URL" ]; then
+    echo "Error: Go Exporter URL is required."
+    exit 1
+  fi
+fi
+echo "✅ Go Exporter URL is set."
+
+# Get the C# Producer URL
+if [ -z "$CSHARP_PRODUCER_URL" ]; then
+  echo "CSHARP_PRODUCER_URL environment variable not set."
+  read -p "Please enter the pre-signed S3 URL for the C# Producer package: " CSHARP_PRODUCER_URL
+  if [ -z "$CSHARP_PRODUCER_URL" ]; then
+    echo "Error: C# Producer URL is required."
+    exit 1
+  fi
+fi
+echo "✅ C# Producer URL is set."
 
 
 # --- Step 2: Deploy CloudFormation Stack ---
@@ -112,7 +121,9 @@ aws cloudformation deploy \
   --region "${AWS_REGION}" \
   --parameter-overrides \
     MyIP="${MY_IP}" \
-    DbMasterPassword="${DB_PASSWORD}"
+    DbMasterPassword="${DB_PASSWORD}" \
+    GoExporterPackageUrl="${GO_EXPORTER_URL}" \
+    CSharpProducerPackageUrl="${CSHARP_PRODUCER_URL}"
 
 echo "--- Waiting for stack deployment to complete. This can take 10-15 minutes... ---"
 aws cloudformation wait stack-create-complete --stack-name "${STACK_NAME}" --region "${AWS_REGION}"
