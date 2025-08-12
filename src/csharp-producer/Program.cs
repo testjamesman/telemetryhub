@@ -58,7 +58,8 @@ public class Program
                 }
             }
             Console.WriteLine($"{DateTime.UtcNow:o} Waiting for 1 minute before next message...");
-            await Task.Delay(TimeSpan.FromMinutes(1));
+            //await Task.Delay(TimeSpan.FromMinutes(1));
+            await Task.Delay(TimeSpan.FromSeconds(3));
         }
     }
 }
