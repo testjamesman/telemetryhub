@@ -342,7 +342,7 @@ This step deploys both the `python-processor` and `load-generator` containers to
     ```
 4.  **Get the Web UI URL.** The script will wait for all pods to be ready and for the AWS Load Balancer to be provisioned. It will then print the public URL for the Load Generator web UI.
 
-### 7. Verify Host Application Deployment
+### 7. Host Application Deployment
 
 The Go and C# applications are pre-loaded by the `UserData` scripts in the CloudFormation template. This section describes how to connect to the instances, build the apps, and run them as background processes.
 
@@ -375,10 +375,10 @@ The Go and C# applications are pre-loaded by the `UserData` scripts in the Cloud
    cd /home/ssm-user/telemetry-hub/src/go-exporter
    
    # Install dependencies
-   go mod tidy
+   sudo go mod tidy
    
    # Build the executable
-   go build -o exporter .
+   sudo go build -o exporter .
    
    # Start as a background process
    nohup ./exporter &> nohup.out &
@@ -394,40 +394,87 @@ The Go and C# applications are pre-loaded by the `UserData` scripts in the Cloud
 
 #### Windows VM (C# Producer)
 
-1.  **Connect to the Windows VM.** Use Session Manager from your local terminal to start a PowerShell session.
+The C# application must be manually published and installed as a Windows Service. All commands are run from a PowerShell terminal via AWS SSM.
+
+1.  **Connect to the Windows VM.**
     ```bash
     # Get the Instance ID from CloudFormation outputs
     WINDOWS_INSTANCE_ID=$(aws cloudformation describe-stacks --stack-name TelemetryHubStack --query "Stacks[0].Outputs[?OutputKey=='WindowsInstanceId'].OutputValue" --output text)
 
-    # Start an SSM session
+    # Start an SSM session (this opens a PowerShell terminal)
     aws ssm start-session --target $WINDOWS_INSTANCE_ID
     ```
 
-2. **Set Environment Variable**
-   ```powershell
-   # Set the SQS queue variable
-   $Env:SQS_QUEUE_URL = "<sqs-url>"
-   ```
-
-3. **Build and Start the App**
+2. **Publish the Application.**
    ```powershell
    # Navigate to the app directory
    cd C:\Users\Administrator\telemetry-hub
    
-   # Build the app
+   # Build and publish the app for release
    dotnet publish -c Release -o ./publish
-   
-   # Start the app as a background job
-   Start-Job -ScriptBlock { C:\Users\Administrator\telemetry-hub\publish\DataProducer.exe }
    ```
 
-4.  **Verify the application is working.** The application runs as a background job. You can check its status and view its output.
-    ```powershell
-    # Check the status of running jobs
-    Get-Job
+3. **Create the Windows Service.**
+   ```powershell
+   # Define variables for the service
+   $serviceName = "DataProducer"
+   $binaryPath = "C:\Users\Administrator\telemetry-hub\publish\DataProducer.exe"
 
-    # Retrieve output (logs) from the job (replace <ID> with the job's ID)
-    Receive-Job -Id <ID>
+   # Create the service and set it to start automatically
+   New-Service -Name $serviceName -BinaryPathName $binaryPath -DisplayName "Telemetry Hub Data Producer" -Description "Sends telemetry data to SQS." -StartupType Automatic
+   ```
+
+4. **Set Environment Variable for the Service.** Windows Services do not inherit environment variables from user sessions. You must set them in the registry for the service itself.
+    ```powershell
+    # First, get the SQS Queue URL from your local machine's terminal
+    # (not in the SSM session) and copy it.
+    aws cloudformation describe-stacks --stack-name TelemetryHubStack --query "Stacks[0].Outputs[?OutputKey=='SqsQueueUrl'].OutputValue" --output text
+
+    # In the SSM PowerShell session, set the variable (paste the URL you copied)
+    $sqsQueueUrl = "<your-sqs-queue-url>"
+    
+    # Set the Environment registry key for the service.
+    $serviceRegPath = "HKLM:\System\CurrentControlSet\Services\$serviceName"
+    Set-ItemProperty -Path $serviceRegPath -Name Environment -Value @("SQS_QUEUE_URL=$sqsQueueUrl") -Type MultiString
+    
+    # Validate the key is set
+    Get-ItemProperty -Path $serviceRegPath | Select-Object -ExpandProperty Environment
+    ```
+
+5. **Start and Verify the Service.**
+    ```powershell
+    # Start the service
+    Start-Service -Name $serviceName
+
+    # Check the status of the service
+    Get-Service -Name $serviceName
+    # You should see the Status as "Running"
+    ```
+
+6.  **View Application Logs.** The application now logs to two places: the Windows Event Log and a local file.
+
+    **a) View Windows Event Log:**
+    ```powershell
+    # Retrieve the most recent logs from the service
+    Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='DataProducer'} -MaxEvents 20 | Format-List
+    ```
+
+    **b) View Local Log File:**
+    ```powershell
+    # Get the last 20 lines from the log file
+    Get-Content -Path "C:\Users\Administrator\telemetry-hub\publish\logs\service-*.log" -Tail 20
+    ```
+
+7. **Updating/Reinstalling the Service**
+    If you need to update the application, you must first stop and delete the existing service before creating the new one.
+    ```powershell
+    # Stop the service if it's running
+    Stop-Service -Name "DataProducer"
+
+    # Delete the service using the Service Control utility
+    sc.exe delete "DataProducer"
+
+    # After deleting, you can re-run steps 2 through 6 to publish and install the new version.
     ```
 
 ### 8. Using the Web UI
@@ -535,13 +582,6 @@ This section covers common issues you might encounter during deployment.
     2.  **Check Pod Logs:** Run `kubectl logs -l app=load-generator`. Look for any startup errors in the Flask application.
     3.  **Check Security Groups:** Ensure the security group for your EKS nodes allows inbound traffic on port 80 from your IP address. `eksctl` usually-configures this correctly, but it's worth checking.
 
-### Go or C# App Fails to Start
-
-- **Problem:** The `go run` or `dotnet run` command fails on the EC2 instances.
-- **Solution:**
-    1.  **Check Environment Variables:** The most common issue is that the required environment variables (`DB_HOST`, `DB_PASSWORD`, `SQS_QUEUE_URL`) are not set correctly in your shell session. Double-check that you have exported them correctly.
-    2.  **Check Security Groups:** Ensure the security groups for the RDS instance and the EC2 instances allow traffic between them on the correct ports (5432 for PostgreSQL). The CloudFormation template should handle this, but network connectivity is a common culprit.
-
 ### Viewing Application Logs
 
 When troubleshooting, the first step is always to check the application logs. Here is how to access them for each component.
@@ -576,14 +616,23 @@ The Go application was started with `nohup`, which redirects its output to a fil
 
 #### Windows VM (C# Producer)
 
-The C# application was started as a background job in PowerShell.
+The C# application was started as a Windows Service
 
 1.  **Connect to the Windows VM** using Session Manager.
 2.  **Check the status of the job:**
     ```powershell
-    Get-Job
+    Get-Service -Name DataProducer
     ```
-3.  **Retrieve the output from the job.** Replace `<ID>` with the ID number you see from `Get-Job`.
+3.  **Check application logs:** The application now logs to two places: the Windows Event Log and a local file.
+
+    **a) View Windows Event Log:**
     ```powershell
-    Receive-Job -Id <ID>
+    # Retrieve the most recent logs from the service
+    Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='DataProducer'} -MaxEvents 20 | Format-List
+    ```
+
+    **b) View Local Log File:**
+    ```powershell
+    # Get the last 20 lines from the log file
+    Get-Content -Path "C:\Users\Administrator\telemetry-hub\publish\logs\service-*.log" -Tail 20
     ```
